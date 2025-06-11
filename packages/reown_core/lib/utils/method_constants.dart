@@ -1,4 +1,5 @@
 import 'package:reown_core/models/json_rpc_models.dart';
+import 'package:reown_core/models/link_mode_models.dart';
 import 'package:reown_core/utils/constants.dart';
 
 class MethodConstants {
@@ -14,10 +15,6 @@ class MethodConstants {
   static const WC_SESSION_EVENT = 'wc_sessionEvent';
   static const WC_SESSION_DELETE = 'wc_sessionDelete';
   static const WC_SESSION_PING = 'wc_sessionPing';
-
-  // Deprecated method but still supported for retrocompatibility
-  // static const WC_AUTH_REQUEST = 'wc_authRequest';
-
   static const WC_SESSION_AUTHENTICATE = 'wc_sessionAuthenticate';
 
   static const Map<String, Map<String, RpcOptions>> RPC_OPTS = {
@@ -185,17 +182,32 @@ class MethodConstants {
         tag: 1119,
       ),
     },
-    // WC_AUTH_REQUEST: {
-    //   'req': RpcOptions(
-    //     ttl: ReownConstants.ONE_DAY,
-    //     prompt: true,
-    //     tag: 3000,
-    //   ),
-    //   'res': RpcOptions(
-    //     ttl: ReownConstants.ONE_DAY,
-    //     prompt: false,
-    //     tag: 3001,
-    //   ),
-    // },
+  };
+
+  // LINK MODE related methods, only meant to be used with Events SDK
+  static const WC_SESSION_AUTHENTICATE_LINK_MODE =
+      'wc_sessionAuthenticate_linkMode';
+  static const WC_SESSION_REQUEST_LINK_MODE = 'wc_sessionRequest_linkMode';
+
+  static const Map<String, Map<String, LinkModeOptions>> LM_OPTS = {
+    WC_SESSION_AUTHENTICATE_LINK_MODE: {
+      'req': LinkModeOptions(
+        tag: 1122,
+      ),
+      'res': LinkModeOptions(
+        tag: 1123,
+      ),
+      'reject': LinkModeOptions(
+        tag: 1124,
+      ),
+    },
+    WC_SESSION_REQUEST_LINK_MODE: {
+      'req': LinkModeOptions(
+        tag: 1125,
+      ),
+      'res': LinkModeOptions(
+        tag: 1126,
+      ),
+    }
   };
 }

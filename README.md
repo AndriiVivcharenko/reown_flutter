@@ -2,11 +2,15 @@
 
 The communications protocol for web3, Reown brings the ecosystem together by enabling hundreds of wallets and apps to securely connect and interact. This repository contains Flutter implementation of WalletConnect protocol for Flutter applications.
 
-## SDK Chart
+## Published SDKs
 
-| [Core SDK](packages/reown_core) | [Sign SDK](packages/reown_sign) | [WalletKit](packages/reown_walletkit) | [AppKit](packages/reown_appkit) |
-|---------------------------------|---------------------------------|---------------------------------------|---------------------------------|
-| 1.0.2                           | 1.0.2                           | 1.0.2                                 | 1.0.1                           |
+https://pub.dev/publishers/reown.com/packages
+
+## Documentation
+
+AppKit: https://docs.reown.com/appkit/flutter/core/installation
+
+WalletKit: https://docs.reown.com/walletkit/flutter/installation
 
 ## License
 
@@ -25,26 +29,22 @@ Reown is released under the Apache 2.0 license. [See LICENSE](/LICENSE) for deta
 1. Run `cd packages/reown_walletkit/example`
 2. Run `flutter run --dart-define="PROJECT_ID=0123..." --flavor internal`
 
-You can add your own keys for testing purposes as follows:
+The wallet will generate a random keys for evm, solana, polkadot, kadena, tron and cosmos
 
-`--dart-define=ETH_SECRET_KEY=your mnemonic phrase....`
-
-`--dart-define=KADENA_SECRET_KEY=5fgQC1.........`
-
-`--dart-define=KADENA_ADDRESS=5fgQC1.........`
-
-`--dart-define=SOLANA_SECRET_KEY=5fgQC1.........`
-
-`--dart-define=SOLANA_ADDRESS=DbfmtKwL.........`
-
-`--dart-define=POLKADOT_MNEMONIC=your mnemonic phrase....`
-
-`--dart-define=POLKADOT_ADDRESS=DbfmtKwL.........`
+You will be able to restore your own key if wanted
 
 _NB: WalletKit sample is intended to be used just as an explanatory project_
 
+You can also download our Flutter Sample Wallet at:
+  - [Testflight for iOS](https://testflight.apple.com/join/Uv0XoBuD)
+  - [Firebase App Distribution for Android](https://appdistribution.firebase.dev/i/8e6452c6bbd68911)
 
 ### Run AppKit Sample
 
 1. Run `cd packages/reown_appkit/example/base`
 2. Run `flutter run --dart-define="PROJECT_ID=0123..." --flavor internal`
+
+
+You can also download our Flutter Sample Dapp at:
+  - [Testflight for iOS](https://testflight.apple.com/join/6aRJSllc)
+  - [Firebase App Distribution for Android](https://appdistribution.firebase.dev/i/52c9b87bbf5fbe01)

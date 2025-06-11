@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:typed_data';
+import 'package:http/http.dart' as http;
 
 import 'package:flutter/material.dart';
 import 'package:get_it/get_it.dart';
@@ -8,7 +9,6 @@ import 'package:reown_walletkit/reown_walletkit.dart';
 import 'package:solana_web3/solana_web3.dart' as solana;
 // ignore: implementation_imports
 import 'package:solana_web3/src/crypto/nacl.dart' as nacl;
-import 'package:bs58/bs58.dart';
 
 import 'package:reown_walletkit_wallet/dependencies/i_walletkit_service.dart';
 import 'package:reown_walletkit_wallet/dependencies/key_service/i_key_service.dart';
@@ -22,6 +22,7 @@ class SolanaService2 {
   Map<String, dynamic Function(String, dynamic)> get solanaRequestHandlers => {
         'solana_signMessage': solanaSignMessage,
         'solana_signTransaction': solanaSignTransaction,
+        'solana_signAllTransactions': solanaSignAllTransaction,
       };
 
   final _walletKit = GetIt.I<IWalletKitService>().walletKit;
@@ -125,10 +126,14 @@ class SolanaService2 {
 
           // Sign the transaction.
           decodedTx.sign([keyPair]);
+          // reserialize and re-encode transaction including signature
+          const config = solana.TransactionSerializableConfig();
+          final bytes = decodedTx.serialize(config).asUint8List();
+          final reencodedTx = base64.encode(bytes);
 
           response = response.copyWith(
             result: {
-              'signature': decodedTx.signatures.first.toBase58(),
+              'signature': reencodedTx,
             },
           );
         } else {
@@ -184,6 +189,80 @@ class SolanaService2 {
     _handleResponseForTopic(topic, response);
   }
 
+  Future<void> solanaSignAllTransaction(
+    String topic,
+    dynamic parameters,
+  ) async {
+    debugPrint(
+        '[SampleWallet] solanaSignAllTransactions: ${jsonEncode(parameters)}');
+    final pRequest = _walletKit.pendingRequests.getAll().last;
+    var response = JsonRpcResponse(id: pRequest.id, jsonrpc: '2.0');
+
+    try {
+      final params = parameters as Map<String, dynamic>;
+      final beautifiedTrx = const JsonEncoder.withIndent('  ').convert(params);
+
+      final keyPair = await _getKeyPair();
+
+      if (await MethodsUtils.requestApproval(
+        // Show Approval Modal
+        beautifiedTrx,
+        method: pRequest.method,
+        chainId: pRequest.chainId,
+        address: keyPair.pubkey.toBase58(),
+        transportType: pRequest.transportType.name,
+      )) {
+        if (params.containsKey('transactions')) {
+          final transactions = params['transactions'] as List;
+          final decodedTxsList = transactions
+              .map((encodedTx) => solana.Transaction.fromBase64(encodedTx))
+              .toList();
+
+          List<String> signedTransactions = [];
+          for (var decodedTx in decodedTxsList) {
+            // Sign the transaction.
+            decodedTx.sign([keyPair]);
+            // reserialize and re-encode transaction including signature
+            const config = solana.TransactionSerializableConfig();
+            final bytes = decodedTx.serialize(config).asUint8List();
+            final encodedTx = base64.encode(bytes);
+            signedTransactions.add(encodedTx);
+          }
+
+          response = response.copyWith(
+            result: {
+              'transactions': signedTransactions,
+            },
+          );
+        }
+      } else {
+        final error = Errors.getSdkError(Errors.USER_REJECTED);
+        response = response.copyWith(
+          error: JsonRpcError(
+            code: error.code,
+            message: error.message,
+          ),
+        );
+      }
+    } catch (e, s) {
+      debugPrint('[SampleWallet] solanaSignAllTransactions error $e, $s');
+      final error = Errors.getSdkError(Errors.MALFORMED_REQUEST_PARAMS);
+      response = response.copyWith(
+        error: JsonRpcError(
+          code: error.code,
+          message: error.message,
+        ),
+      );
+    }
+
+    await _walletKit.respondSessionRequest(
+      topic: topic,
+      response: response,
+    );
+
+    _handleResponseForTopic(topic, response);
+  }
+
   Future<solana.Keypair> _getKeyPair() async {
     final keys = GetIt.I<IKeyService>().getKeysForChain(
       chainSupported.chainId,
@@ -202,6 +281,7 @@ class SolanaService2 {
     final session = _walletKit.sessions.get(topic);
 
     try {
+      debugPrint('[SampleWallet] response: ${jsonEncode(response.result)}');
       await _walletKit.respondSessionRequest(
         topic: topic,
         response: response,
@@ -217,6 +297,57 @@ class SolanaService2 {
         session!.peer.metadata.redirect,
         error.message,
       );
+    }
+  }
+
+  Future<dynamic> getBalance({required String address}) async {
+    final uri = Uri.parse('https://rpc.walletconnect.org/v1');
+    final queryParams = {
+      'projectId': _walletKit.core.projectId,
+      'chainId': chainSupported.chainId
+    };
+    final response = await http.post(
+      uri.replace(queryParameters: queryParams),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'id': 1,
+        'jsonrpc': '2.0',
+        'method': 'getBalance',
+        'params': [address],
+      }),
+    );
+    if (response.statusCode == 200 && response.body.isNotEmpty) {
+      try {
+        final result = _parseRpcResultAs<Map<String, dynamic>>(response.body);
+        final value = result['value'] as int;
+        return value / 1000000000.0;
+      } catch (e) {
+        throw Exception('Failed to load balance. $e');
+      }
+    }
+    try {
+      final errorData = jsonDecode(response.body) as Map<String, dynamic>;
+      final reasons = errorData['reasons'] as List<dynamic>;
+      final reason = reasons.isNotEmpty
+          ? reasons.first['description'] ?? ''
+          : response.body;
+      throw Exception(reason);
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  T _parseRpcResultAs<T>(String body) {
+    try {
+      final result = Map<String, dynamic>.from({...jsonDecode(body), 'id': 1});
+      final jsonResponse = JsonRpcResponse.fromJson(result);
+      if (jsonResponse.result != null) {
+        return jsonResponse.result;
+      } else {
+        throw jsonResponse.error ?? 'Error parsing result';
+      }
+    } catch (e) {
+      rethrow;
     }
   }
 }

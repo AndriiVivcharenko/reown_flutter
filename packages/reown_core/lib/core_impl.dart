@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:math';
 
+import 'package:connectivity_plus/connectivity_plus.dart' show Connectivity;
 import 'package:logger/logger.dart';
 import 'package:reown_core/connectivity/connectivity.dart';
 import 'package:reown_core/connectivity/i_connectivity.dart';
@@ -9,6 +10,9 @@ import 'package:reown_core/crypto/i_crypto.dart';
 import 'package:reown_core/echo/echo.dart';
 import 'package:reown_core/echo/echo_client.dart';
 import 'package:reown_core/echo/i_echo.dart';
+import 'package:reown_core/events/events.dart';
+import 'package:reown_core/events/events_tracker.dart';
+import 'package:reown_core/events/i_events.dart';
 import 'package:reown_core/heartbit/heartbeat.dart';
 import 'package:reown_core/heartbit/i_heartbeat.dart';
 import 'package:reown_core/i_core_impl.dart';
@@ -67,6 +71,9 @@ class ReownCore implements IReownCore {
   late IEcho echo;
 
   @override
+  late IEvents events;
+
+  @override
   late IHeartBeat heartbeat;
 
   @override
@@ -78,10 +85,9 @@ class ReownCore implements IReownCore {
   @override
   late ILinkModeStore linkModeStore;
 
-  Logger _logger = Logger(
-    level: Level.off,
-    printer: PrettyPrinter(),
-  );
+  late final LogLevel _logLevel;
+  late final LogCallback? _logCallback;
+  late final Logger _logger;
   @override
   Logger get logger => _logger;
 
@@ -89,21 +95,19 @@ class ReownCore implements IReownCore {
   void addLogListener(Function(String) callback) {
     try {
       _logCallback = (LogEvent event) {
-        if (event.level == _logLevel.toLevel()) {
-          callback.call('[LogLevel ${event.level.name}] ${event.message}');
+        final emoji = _LogPrinter.defaultLevelEmojis[event.level];
+        if (event.level == _logLevel.toLevel() || _logLevel == LogLevel.all) {
+          callback.call('${emoji ?? ''} ${event.message}');
         }
       };
       Logger.addLogListener(_logCallback!);
     } catch (_) {}
   }
 
-  late final LogLevel _logLevel;
-  late final LogCallback? _logCallback;
-
   @override
   bool removeLogListener(Function(String) callback) {
     if (_logCallback != null) {
-      return Logger.removeLogListener(_logCallback!);
+      return Logger.removeLogListener(_logCallback);
     }
     return false;
   }
@@ -120,7 +124,6 @@ class ReownCore implements IReownCore {
     IHttpClient httpClient = const HttpWrapper(),
     IWebSocketHandler? webSocketHandler,
   }) {
-    PrettyPrinter();
     _logLevel = logLevel;
     _logger = Logger(
       level: _logLevel.toLevel(),
@@ -198,12 +201,23 @@ class ReownCore implements IReownCore {
         httpClient: httpClient,
       ),
     );
+    events = Events(
+      core: this,
+      httpClient: httpClient,
+      eventsTracker: EventsTracker(
+        storage: storage,
+        context: StoreVersions.CONTEXT_EVENTS_TRACKER,
+        version: StoreVersions.VERSION_EVENTS_TRACKER,
+        fromJson: (dynamic value) => value as List<String>,
+      ),
+    );
     verify = Verify(
       core: this,
       httpClient: httpClient,
     );
     connectivity = ConnectivityState(
       core: this,
+      connectivity: Connectivity(),
     );
     linkModeStore = LinkModeStore(
       storage: storage,
@@ -220,6 +234,7 @@ class ReownCore implements IReownCore {
     await relayClient.init();
     await expirer.init();
     await pairing.init();
+    await events.init();
     await connectivity.init();
     await linkModeStore.init();
     heartbeat.init();
@@ -479,7 +494,7 @@ class _LogPrinter extends LogPrinter {
     var emoji = _getEmoji(level);
     for (var line in message.split('\n')) {
       if (line.isNotEmpty) {
-        buffer.add('$verticalLineAtLevel$time $emoji$line');
+        buffer.add('$verticalLineAtLevel$emoji$line');
       }
     }
     if (_includeBox[level]! && hasBorders) buffer.add(_bottomBorder);

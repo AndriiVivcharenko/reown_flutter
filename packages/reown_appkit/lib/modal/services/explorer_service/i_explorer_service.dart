@@ -36,13 +36,11 @@ abstract class IExplorerService {
 
   String get searchValue;
 
-  /// update the recently used position to the top list
-  Future<void> storeConnectedWallet(ReownAppKitModalWalletInfo? walletInfo);
-
-  Future<void> storeRecentWalletId(String? walletId);
-
   /// Get connected wallet data from local storage
   ReownAppKitModalWalletInfo? getConnectedWallet();
+
+  /// update the recently used position to the top list
+  Future<void> storeConnectedWallet(ReownAppKitModalWalletInfo? walletInfo);
 
   /// Gets the WalletRedirect object from a wallet info data
   WalletRedirect? getWalletRedirect(ReownAppKitModalWalletInfo? walletInfo);
@@ -54,4 +52,6 @@ abstract class IExplorerService {
   String getAssetImageUrl(String imageId);
 
   Future<ReownAppKitModalWalletInfo?> getCoinbaseWalletObject();
+
+  Future<ReownAppKitModalWalletInfo?> getPhantomWalletObject();
 }

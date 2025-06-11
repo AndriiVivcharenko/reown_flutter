@@ -22,6 +22,7 @@ class AccountListItem extends StatelessWidget {
     this.hightlighted = false,
     this.flexible = false,
     this.padding,
+    this.backgroundColor,
   });
   final Widget? iconWidget;
   final String? iconPath;
@@ -35,6 +36,7 @@ class AccountListItem extends StatelessWidget {
   final bool hightlighted;
   final bool flexible;
   final EdgeInsets? padding;
+  final WidgetStateProperty<Color?>? backgroundColor;
 
   @override
   Widget build(BuildContext context) {
@@ -42,10 +44,12 @@ class AccountListItem extends StatelessWidget {
     final themeColors = ReownAppKitModalTheme.colorsOf(context);
     final radiuses = ReownAppKitModalTheme.radiusesOf(context);
     return BaseListItem(
+      semanticsLabel: title,
       onTap: onTap,
       hightlighted: hightlighted,
       padding: padding,
       flexible: flexible,
+      backgroundColor: backgroundColor,
       child: Row(
         children: [
           iconWidget ?? const SizedBox.shrink(),
@@ -70,6 +74,7 @@ class AccountListItem extends StatelessWidget {
                   Text(
                     title,
                     overflow: TextOverflow.ellipsis,
+                    maxLines: flexible ? 100 : 1,
                     style: titleStyle ??
                         themeData.textStyles.paragraph600.copyWith(
                           color: themeColors.foreground100,
@@ -89,19 +94,21 @@ class AccountListItem extends StatelessWidget {
             ),
           ),
           trailing ??
-              Padding(
-                padding: const EdgeInsets.only(right: 8.0),
-                child: SvgPicture.asset(
-                  'lib/modal/assets/icons/chevron_right.svg',
-                  package: 'reown_appkit',
-                  colorFilter: ColorFilter.mode(
-                    themeColors.foreground200,
-                    BlendMode.srcIn,
-                  ),
-                  width: 18.0,
-                  height: 18.0,
-                ),
-              ),
+              (onTap != null
+                  ? Padding(
+                      padding: const EdgeInsets.only(right: 8.0),
+                      child: SvgPicture.asset(
+                        'lib/modal/assets/icons/chevron_right.svg',
+                        package: 'reown_appkit',
+                        colorFilter: ColorFilter.mode(
+                          themeColors.foreground200,
+                          BlendMode.srcIn,
+                        ),
+                        width: 18.0,
+                        height: 18.0,
+                      ),
+                    )
+                  : const SizedBox.shrink()),
         ],
       ),
     );

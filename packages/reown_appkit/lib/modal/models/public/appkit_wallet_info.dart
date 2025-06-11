@@ -8,9 +8,9 @@ part 'appkit_wallet_info.g.dart';
 @freezed
 class ReownAppKitModalWalletInfo with _$ReownAppKitModalWalletInfo {
   const factory ReownAppKitModalWalletInfo({
-    required Listing listing,
-    required bool installed,
-    required bool recent,
+    required AppKitModalWalletListing listing,
+    @Default(false) bool installed,
+    @Default(false) bool recent,
   }) = _ReownAppKitModalWalletInfo;
 
   factory ReownAppKitModalWalletInfo.fromJson(Map<String, dynamic> json) =>
@@ -21,9 +21,12 @@ extension ReownAppKitWalletInfoExtension on ReownAppKitModalWalletInfo {
   bool get isCoinbase =>
       listing.id ==
       'fd20dc426fb37566d803205b19bbc1d4096b248ac04548e3cfb6b3a38bd033aa';
+  bool get isPhantom =>
+      listing.id ==
+      'a797aa35c0fadbfc1a53e7f675162ed5226968b44a19ee3d24385c64d1d3c393';
 }
 
-class Listing {
+class AppKitModalWalletListing {
   final String id;
   final String name;
   final String homepage;
@@ -37,8 +40,9 @@ class Listing {
   final String? playStore;
   final String? rdns;
   final List<Injected>? injected;
+  final String? description;
 
-  const Listing({
+  const AppKitModalWalletListing({
     required this.id,
     required this.name,
     required this.homepage,
@@ -52,9 +56,10 @@ class Listing {
     this.playStore,
     this.rdns,
     this.injected,
+    this.description,
   });
 
-  Listing copyWith({
+  AppKitModalWalletListing copyWith({
     String? id,
     String? name,
     String? homepage,
@@ -68,8 +73,9 @@ class Listing {
     String? playStore,
     String? rdns,
     List<Injected>? injected,
+    String? description,
   }) =>
-      Listing(
+      AppKitModalWalletListing(
         id: id ?? this.id,
         name: name ?? this.name,
         homepage: homepage ?? this.homepage,
@@ -83,15 +89,17 @@ class Listing {
         playStore: playStore ?? this.playStore,
         rdns: rdns ?? this.rdns,
         injected: injected ?? this.injected,
+        description: description ?? this.description,
       );
 
-  factory Listing.fromRawJson(String str) => Listing.fromJson(json.decode(str));
+  factory AppKitModalWalletListing.fromRawJson(String str) =>
+      AppKitModalWalletListing.fromJson(json.decode(str));
 
   String toRawJson() => json.encode(toJson());
 
-  factory Listing.fromJson(Object? json) {
+  factory AppKitModalWalletListing.fromJson(Object? json) {
     final j = json as Map<String, dynamic>? ?? {};
-    return Listing(
+    return AppKitModalWalletListing(
       id: j['id'].toString(),
       name: j['name'],
       homepage: j['homepage'],
@@ -109,6 +117,7 @@ class Listing {
           : List<Injected>.from(
               j['injected']!.map((x) => Injected.fromJson(x)),
             ),
+      description: j['description'],
     );
   }
 
@@ -128,6 +137,7 @@ class Listing {
         'injected': injected == null
             ? []
             : List<dynamic>.from(injected!.map((x) => x.toJson())),
+        'description': description,
       };
 }
 

@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:reown_appkit/modal/constants/string_constants.dart';
 import 'package:reown_appkit/reown_appkit.dart';
 
@@ -60,8 +62,11 @@ class CoreUtils {
       return Uri.parse(safeAppUrl);
     }
 
-    final encodedWcUrl = Uri.encodeComponent(wcUri);
+    if (wcUri.contains('requestId')) {
+      return Uri.parse('${safeAppUrl}wc?$wcUri');
+    }
 
+    final encodedWcUrl = Uri.encodeComponent(wcUri);
     return Uri.parse('${safeAppUrl}wc?uri=$encodedWcUrl');
   }
 
@@ -77,31 +82,48 @@ class CoreUtils {
       return Uri.parse(plainAppUrl);
     }
 
-    final encodedWcUrl = Uri.encodeComponent(wcUri);
+    if (wcUri.contains('requestId')) {
+      return Uri.parse('${plainAppUrl}wc?$wcUri');
+    }
 
+    final encodedWcUrl = Uri.encodeComponent(wcUri);
     return Uri.parse('${plainAppUrl}wc?uri=$encodedWcUrl');
   }
 
-  static String formatChainBalance(double? chainBalance, {int precision = 3}) {
+  static String formatChainBalance(double? chainBalance, {int precision = 4}) {
+    final p = min(precision, 16);
     if (chainBalance == null) {
-      return '_.'.padRight(precision + 1, '_');
+      return '_.'.padRight(p + 1, '_');
     }
     if (chainBalance == 0.0) {
-      return '0.'.padRight(precision + 2, '0');
+      return '0.'.padRight(p + 2, '0');
     }
-    return chainBalance.toStringAsPrecision(precision)
+
+    if (chainBalance.toInt() > 0) {
+      return chainBalance.toStringAsFixed(p - 1)
+        ..replaceAll(RegExp(r'([.]*0+)(?!.*\d)'), '');
+    }
+
+    return chainBalance.toStringAsFixed(p)
       ..replaceAll(RegExp(r'([.]*0+)(?!.*\d)'), '');
   }
 
+  static String formatStringBalance(String stringValue, {int precision = 4}) {
+    final value = double.tryParse(stringValue) ?? double.parse('0');
+    return formatChainBalance(value, precision: precision);
+  }
+
+  // TODO move to Core SDK
   static String getUserAgent() {
-    String userAgent = '${CoreConstants.X_SDK_TYPE}'
-        '-flutter-'
+    String userAgent = '${CoreConstants.X_SDK_TYPE}/'
         '${CoreConstants.X_SDK_VERSION}/'
         '${CoreConstants.X_CORE_SDK_VERSION}/'
         '${ReownCoreUtils.getOS()}';
+    //
     return userAgent;
   }
 
+  // TODO move to Core SDK
   static Map<String, String> getAPIHeaders(
     String projectId, [
     String? referer,
@@ -110,7 +132,7 @@ class CoreUtils {
     return {
       'x-project-id': projectId,
       'x-sdk-type': CoreConstants.X_SDK_TYPE,
-      'x-sdk-version': 'flutter-${CoreConstants.X_SDK_VERSION}',
+      'x-sdk-version': CoreConstants.X_SDK_VERSION,
       'user-agent': getUserAgent(),
       if (referer != null) 'referer': referer,
       if (origin != null) 'origin': origin,

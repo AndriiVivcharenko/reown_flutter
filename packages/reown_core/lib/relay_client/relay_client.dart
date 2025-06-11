@@ -16,6 +16,7 @@ import 'package:reown_core/utils/utils.dart';
 import 'package:reown_core/models/basic_models.dart';
 import 'package:reown_core/utils/constants.dart';
 import 'package:reown_core/utils/errors.dart';
+import 'package:reown_core/version.dart';
 
 class RelayClient implements IRelayClient {
   static const JSON_RPC_PUBLISH = 'publish';
@@ -111,24 +112,33 @@ class RelayClient implements IRelayClient {
     required String message,
     required int ttl,
     required int tag,
+    int? correlationId,
+    Map<String, dynamic>? tvf,
   }) async {
     _checkInitialized();
-
-    core.logger.i('[$runtimeType] publish, $topic, $message');
 
     Map<String, dynamic> data = {
       'message': message,
       'ttl': ttl,
       'topic': topic,
       'tag': tag,
+      // new fields valid for all tags in Sign SDK
+      // is the request.id of the wc_sessionRequest call
+      if (correlationId != null) 'correlationId': correlationId,
+      // tvf fields valid only for tags 1108 and 1109 and certain methods
+      ...?tvf
     };
+
+    core.logger.i(
+      '[$runtimeType] publish, topic: $topic, tag: $tag, correlationId: $correlationId, tvf: $tvf',
+    );
 
     try {
       await messageTracker.recordMessageEvent(topic, message);
       var _ = await _sendJsonRpcRequest(
         _buildMethod(JSON_RPC_PUBLISH),
-        data,
-        JsonRpcUtils.payloadId(entropy: 6),
+        parameters: data,
+        id: JsonRpcUtils.payloadId(entropy: 6),
       );
     } catch (e, s) {
       core.logger.e('[$runtimeType], publish: $e', stackTrace: s);
@@ -137,12 +147,15 @@ class RelayClient implements IRelayClient {
   }
 
   @override
-  Future<String> subscribe({required String topic}) async {
+  Future<String> subscribe({
+    required String topic,
+    required TransportType transportType,
+  }) async {
     _checkInitialized();
 
     core.logger.i('[$runtimeType] subscribe, $topic');
 
-    pendingSubscriptions[topic] = _onSubscribe(topic);
+    pendingSubscriptions[topic] = _onSubscribe(topic, transportType);
 
     return await pendingSubscriptions[topic];
   }
@@ -158,11 +171,8 @@ class RelayClient implements IRelayClient {
     try {
       await _sendJsonRpcRequest(
         _buildMethod(JSON_RPC_UNSUBSCRIBE),
-        {
-          'topic': topic,
-          'id': id,
-        },
-        JsonRpcUtils.payloadId(entropy: 6),
+        parameters: {'topic': topic, 'id': id},
+        id: JsonRpcUtils.payloadId(entropy: 6),
       );
     } catch (e, s) {
       core.logger.e('[$runtimeType], unsubscribe: $e', stackTrace: s);
@@ -251,14 +261,14 @@ class RelayClient implements IRelayClient {
   Future<void> _createJsonRPCProvider() async {
     _connecting = true;
     _active = true;
-    final auth = await core.crypto.signJWT(core.relayUrl);
-    core.logger.d('[$runtimeType]: Signed JWT: $auth');
+    final signedJWT = await core.crypto.signJWT(core.relayUrl);
+    core.logger.d('[$runtimeType]: Signed JWT: $signedJWT');
     final url = ReownCoreUtils.formatRelayRpcUrl(
       protocol: ReownConstants.CORE_PROTOCOL,
       version: ReownConstants.CORE_VERSION,
-      sdkVersion: ReownConstants.SDK_VERSION,
+      sdkVersion: packageVersion,
       relayUrl: core.relayUrl,
-      auth: auth,
+      auth: signedJWT,
       projectId: core.projectId,
       packageName: (await ReownCoreUtils.getPackageName()),
     );
@@ -330,7 +340,7 @@ class RelayClient implements IRelayClient {
     final reconnectCodes = [1001, 4008, 4010, 1002, 1005, 10002];
     if (code != null) {
       if (reconnectCodes.contains(code)) {
-        await connect();
+        await _connect();
       } else {
         await disconnect();
         final errorReason = code == 3000
@@ -438,11 +448,11 @@ class RelayClient implements IRelayClient {
 
   /// SUBSCRIPTION HANDLING
 
-  Future _sendJsonRpcRequest(
-    String method, [
+  Future<dynamic> _sendJsonRpcRequest(
+    String method, {
     dynamic parameters,
     int? id,
-  ]) async {
+  }) async {
     // If we are connected and we know it send the message!
     if (isConnected) {
       // Here so we dont return null
@@ -466,14 +476,16 @@ class RelayClient implements IRelayClient {
     );
   }
 
-  Future<String> _onSubscribe(String topic) async {
+  Future<String> _onSubscribe(String topic, TransportType transportType) async {
     String? requestId;
     try {
-      requestId = await _sendJsonRpcRequest(
-        _buildMethod(JSON_RPC_SUBSCRIBE),
-        {'topic': topic},
-        JsonRpcUtils.payloadId(entropy: 6),
-      );
+      if (transportType == TransportType.relay) {
+        requestId = await _sendJsonRpcRequest(
+          _buildMethod(JSON_RPC_SUBSCRIBE),
+          parameters: {'topic': topic},
+          id: JsonRpcUtils.payloadId(entropy: 6),
+        );
+      }
     } catch (e, s) {
       core.logger.e(
         '[$runtimeType], _onSubscribe: Topic, $topic, Error: $e',

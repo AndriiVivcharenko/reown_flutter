@@ -1,8 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:developer';
 
-import 'package:eth_sig_util/util/utils.dart';
+import 'package:eth_sig_util/util/utils.dart' as eth_sig_util_util;
 import 'package:flutter/foundation.dart';
 import 'package:get_it/get_it.dart';
 import 'package:reown_walletkit/reown_walletkit.dart';
@@ -13,12 +12,14 @@ import 'package:reown_walletkit_wallet/dependencies/i_walletkit_service.dart';
 import 'package:reown_walletkit_wallet/dependencies/key_service/chain_key.dart';
 import 'package:reown_walletkit_wallet/dependencies/key_service/i_key_service.dart';
 import 'package:reown_walletkit_wallet/models/chain_data.dart';
+import 'package:reown_walletkit_wallet/models/chain_metadata.dart';
 import 'package:reown_walletkit_wallet/utils/dart_defines.dart';
 import 'package:reown_walletkit_wallet/utils/eth_utils.dart';
 import 'package:reown_walletkit_wallet/utils/methods_utils.dart';
 import 'package:reown_walletkit_wallet/widgets/wc_connection_request/wc_connection_request_widget.dart';
 import 'package:reown_walletkit_wallet/widgets/wc_request_widget.dart/wc_request_widget.dart';
 import 'package:reown_walletkit_wallet/widgets/wc_request_widget.dart/wc_session_auth_request_widget.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class WalletKitService extends IWalletKitService {
   final _bottomSheetHandler = GetIt.I<IBottomSheetService>();
@@ -37,23 +38,33 @@ class WalletKitService extends IWalletKitService {
     return link.toString();
   }
 
-  Redirect _constructRedirect() {
+  Redirect _constructRedirect(bool linkModeEnabled) {
     return Redirect(
       native: 'wcflutterwallet$_flavor://',
       universal: _universalLink(),
       // enable linkMode on Wallet so Dapps can use relay-less connection
       // universal: value must be set on cloud config as well
-      linkMode: true,
+      linkMode: linkModeEnabled,
     );
   }
 
   @override
+  final ValueNotifier<ChainMetadata?> currentSelectedChain = ValueNotifier(
+    ChainsDataList.eip155Chains.firstWhere(
+      (e) => e.chainId == 'eip155:1',
+    ),
+  );
+
+  @override
   Future<void> create() async {
+    final prefs = await SharedPreferences.getInstance();
+    final linkModeEnabled = prefs.getBool('rwkt_sample_linkmode') ?? true;
+
     // Create the ReownWalletKit instance
     _walletKit = ReownWalletKit(
       core: ReownCore(
         projectId: DartDefines.projectId,
-        logLevel: LogLevel.info,
+        logLevel: LogLevel.all,
       ),
       metadata: PairingMetadata(
         name: 'FL WalletKit Sample',
@@ -62,9 +73,11 @@ class WalletKitService extends IWalletKitService {
         icons: [
           'https://raw.githubusercontent.com/reown-com/reown_flutter/refs/heads/develop/assets/walletkit-icon$_flavor.png'
         ],
-        redirect: _constructRedirect(),
+        redirect: _constructRedirect(linkModeEnabled),
       ),
     );
+
+    _walletKit!.core.addLogListener(_logListener);
 
     // Setup our listeners
     debugPrint('[SampleWallet] create');
@@ -85,7 +98,7 @@ class WalletKitService extends IWalletKitService {
     // Setup our accounts
     List<ChainKey> chainKeys = await GetIt.I<IKeyService>().loadKeys();
     if (chainKeys.isEmpty) {
-      await GetIt.I<IKeyService>().loadDefaultWallet();
+      await GetIt.I<IKeyService>().createRandomWallet();
       chainKeys = await GetIt.I<IKeyService>().loadKeys();
     }
     for (final chainKey in chainKeys) {
@@ -107,6 +120,10 @@ class WalletKitService extends IWalletKitService {
         }
       }
     }
+  }
+
+  void _logListener(String event) {
+    debugPrint('[WalletKit] $event');
   }
 
   @override
@@ -148,6 +165,8 @@ class WalletKitService extends IWalletKitService {
 
   @override
   FutureOr onDispose() {
+    _walletKit!.core.removeLogListener(_logListener);
+
     _walletKit!.core.pairing.onPairingInvalid.unsubscribe(_onPairingInvalid);
     _walletKit!.core.pairing.onPairingCreate.unsubscribe(_onPairingCreate);
     _walletKit!.core.relayClient.onRelayClientError.unsubscribe(
@@ -288,7 +307,7 @@ class WalletKitService extends IWalletKitService {
       final SessionAuthPayload authPayload = args.authPayload;
       final jsonPyaload = jsonEncode(authPayload.toJson());
       debugPrint('[SampleWallet] _onSessionAuthRequest $jsonPyaload');
-      final supportedChains = ChainData.eip155Chains.map((e) => e.chainId);
+      final supportedChains = ChainsDataList.eip155Chains.map((e) => e.chainId);
       final supportedMethods = SupportedEVMMethods.values.map((e) => e.name);
       final newAuthPayload = AuthSignature.populateAuthPayload(
         authPayload: authPayload,
@@ -336,7 +355,10 @@ class WalletKitService extends IWalletKitService {
           final signature = credentials.signPersonalMessageToUint8List(
             Uint8List.fromList(message.codeUnits),
           );
-          final hexSignature = bytesToHex(signature, include0x: true);
+          final hexSignature = eth_sig_util_util.bytesToHex(
+            signature,
+            include0x: true,
+          );
           cacaos.add(
             AuthSignature.buildAuthObject(
               requestPayload: cacaoRequestPayload,

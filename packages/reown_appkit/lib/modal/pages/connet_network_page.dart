@@ -1,16 +1,17 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:get_it/get_it.dart';
 
 import 'package:reown_appkit/modal/constants/key_constants.dart';
-import 'package:reown_appkit/modal/constants/string_constants.dart';
-import 'package:reown_appkit/modal/services/explorer_service/explorer_service_singleton.dart';
-import 'package:reown_appkit/modal/services/siwe_service/siwe_service_singleton.dart';
+import 'package:reown_appkit/modal/services/explorer_service/i_explorer_service.dart';
+import 'package:reown_appkit/modal/services/magic_service/i_magic_service.dart';
 import 'package:reown_appkit/modal/i_appkit_modal_impl.dart';
 import 'package:reown_appkit/modal/constants/style_constants.dart';
+import 'package:reown_appkit/modal/services/siwe_service/i_siwe_service.dart';
 import 'package:reown_appkit/modal/widgets/icons/rounded_icon.dart';
 import 'package:reown_appkit/modal/widgets/miscellaneous/content_loading.dart';
-import 'package:reown_appkit/modal/widgets/widget_stack/widget_stack_singleton.dart';
+import 'package:reown_appkit/modal/widgets/widget_stack/i_widget_stack.dart';
 import 'package:reown_appkit/modal/widgets/miscellaneous/responsive_container.dart';
 import 'package:reown_appkit/modal/widgets/modal_provider.dart';
 import 'package:reown_appkit/modal/widgets/avatars/wallet_avatar.dart';
@@ -19,10 +20,13 @@ import 'package:reown_appkit/modal/widgets/navigation/navbar.dart';
 import 'package:reown_appkit/reown_appkit.dart';
 
 class ConnectNetworkPage extends StatefulWidget {
-  final ReownAppKitModalNetworkInfo chainInfo;
   const ConnectNetworkPage({
     required this.chainInfo,
+    this.isMagic = false,
   }) : super(key: KeyConstants.connecNetworkPageKey);
+
+  final ReownAppKitModalNetworkInfo chainInfo;
+  final bool isMagic;
 
   @override
   State<ConnectNetworkPage> createState() => _ConnectNetworkPageState();
@@ -30,7 +34,8 @@ class ConnectNetworkPage extends StatefulWidget {
 
 class _ConnectNetworkPageState extends State<ConnectNetworkPage>
     with WidgetsBindingObserver {
-  IReownAppKitModal? _service;
+  IWidgetStack get _widgetStack => GetIt.I<IWidgetStack>();
+  IReownAppKitModal? _appKitModal;
   ModalError? errorEvent;
 
   @override
@@ -38,42 +43,72 @@ class _ConnectNetworkPageState extends State<ConnectNetworkPage>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _service = ModalProvider.of(context).instance;
-      _service?.onModalError.subscribe(_errorListener);
+      _appKitModal = ModalProvider.of(context).instance;
+      _appKitModal?.onModalError.subscribe(_errorListener);
       setState(() {});
       Future.delayed(const Duration(milliseconds: 300), () => _connect());
     });
   }
 
+  IMagicService get _magicService => GetIt.I<IMagicService>();
+  IExplorerService get _explorerService => GetIt.I<IExplorerService>();
+  ISiweService get _siweService => GetIt.I<ISiweService>();
+
   void _connect() async {
     errorEvent = null;
-    _service!.launchConnectedWallet();
-    try {
-      await _service!.requestSwitchToChain(widget.chainInfo);
-      final chainId = widget.chainInfo.chainId;
-      final chainInfo = ReownAppKitModalNetworks.getNetworkById(
-        CoreConstants.namespace,
-        chainId,
+    if (widget.isMagic) {
+      final success = await _magicService.switchNetwork(
+        chainId: widget.chainInfo.chainId,
       );
-      if (chainInfo != null) {
-        Future.delayed(const Duration(milliseconds: 300), () {
-          if (!siweService.instance!.enabled) {
-            widgetStack.instance.pop();
-          }
-        });
+      if (success) {
+        final siweEnabled = _siweService.config?.enabled != true;
+        final signOutOnNetworkChange = _siweService.signOutOnNetworkChange;
+        if (!siweEnabled || !signOutOnNetworkChange) {
+          await _magicService.getUser(
+            chainId: widget.chainInfo.chainId,
+            isUpdate: true,
+          );
+          _widgetStack.pop();
+        }
       }
-    } catch (e) {
-      setState(() {});
+    } else {
+      try {
+        final redirect =
+            _appKitModal!.session!.peer!.metadata.redirect!.native!;
+        ReownCoreUtils.openURL(redirect);
+        await _appKitModal!.requestSwitchToChain(widget.chainInfo);
+        final chainId = widget.chainInfo.chainId;
+        final namespace = NamespaceUtils.getNamespaceFromChain(chainId);
+        final chainInfo = ReownAppKitModalNetworks.getNetworkInfo(
+          namespace,
+          chainId,
+        );
+        if (chainInfo != null) {
+          Future.delayed(const Duration(milliseconds: 300), () {
+            if (!_siweService.enabled) {
+              _widgetStack.pop();
+            }
+          });
+        }
+      } on JsonRpcError catch (e) {
+        setState(
+          () => errorEvent = ModalError(e.message ?? 'An error occurred'),
+        );
+      } on ReownAppKitModalException catch (e) {
+        setState(() => errorEvent = ModalError(e.message));
+      } catch (e) {
+        setState(() => errorEvent = ModalError('An error occurred'));
+      }
     }
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      if (_service?.session?.sessionService.isCoinbase == true) {
-        if (_service?.selectedChain?.chainId == widget.chainInfo.chainId) {
-          if (!siweService.instance!.enabled) {
-            widgetStack.instance.pop();
+      if (_appKitModal?.session?.sessionService.isCoinbase == true) {
+        if (_appKitModal?.selectedChain?.chainId == widget.chainInfo.chainId) {
+          if (!_siweService.enabled) {
+            _widgetStack.pop();
           }
         }
       }
@@ -84,14 +119,14 @@ class _ConnectNetworkPageState extends State<ConnectNetworkPage>
 
   @override
   void dispose() {
-    _service?.onModalError.unsubscribe(_errorListener);
+    _appKitModal?.onModalError.unsubscribe(_errorListener);
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_service == null) {
+    if (_appKitModal == null) {
       return ContentLoading();
     }
     final themeData = ReownAppKitModalTheme.getDataOf(context);
@@ -105,7 +140,7 @@ class _ConnectNetworkPageState extends State<ConnectNetworkPage>
     //
     final chainId = widget.chainInfo.chainId;
     final imageId = ReownAppKitModalNetworks.getNetworkIconId(chainId);
-    final imageUrl = explorerService.instance.getAssetImageUrl(imageId);
+    final imageUrl = _explorerService.getAssetImageUrl(imageId);
     //
     return ModalNavbar(
       title: widget.chainInfo.name,
@@ -138,14 +173,16 @@ class _ConnectNetworkPageState extends State<ConnectNetworkPage>
                   const SizedBox.square(dimension: 20.0),
                   errorEvent != null
                       ? Text(
-                          'Switch declined',
+                          errorEvent?.message ?? 'Switch declined',
                           textAlign: TextAlign.center,
                           style: themeData.textStyles.paragraph500.copyWith(
                             color: themeColors.error100,
                           ),
                         )
                       : Text(
-                          'Continue in ${_service?.session?.peer?.metadata.name ?? 'wallet'}',
+                          widget.isMagic
+                              ? 'Switching to ${widget.chainInfo.name}'
+                              : 'Continue in ${_appKitModal?.session?.peer?.metadata.name ?? 'wallet'}',
                           textAlign: TextAlign.center,
                           style: themeData.textStyles.paragraph500.copyWith(
                             color: themeColors.foreground100,
@@ -154,14 +191,16 @@ class _ConnectNetworkPageState extends State<ConnectNetworkPage>
                   const SizedBox.square(dimension: 8.0),
                   errorEvent != null
                       ? Text(
-                          'Switch can be declined by the user or if a previous request is still active',
+                          'Switch can be declined by the user or if the wallet doesn\'t support the selected chain.',
                           textAlign: TextAlign.center,
                           style: themeData.textStyles.small500.copyWith(
                             color: themeColors.foreground200,
                           ),
                         )
                       : Text(
-                          'Accept switch request in your wallet',
+                          widget.isMagic
+                              ? 'Wait until it\'s completed'
+                              : 'Accept switch request in your wallet',
                           textAlign: TextAlign.center,
                           style: themeData.textStyles.small500.copyWith(
                             color: themeColors.foreground200,

@@ -1,12 +1,17 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
+import 'dart:typed_data';
 
+import 'package:convert/convert.dart';
 import 'package:event/event.dart';
-import 'package:http/http.dart' as http;
+import 'package:reown_core/models/tvf_data.dart';
 import 'package:reown_core/pairing/utils/json_rpc_utils.dart';
 import 'package:reown_core/reown_core.dart';
 import 'package:reown_core/store/i_generic_store.dart';
+import 'package:reown_core/utils/algorand_utils.dart';
+import 'package:reown_core/utils/near_utils.dart';
+import 'package:reown_core/utils/sui_utils.dart';
 
 import 'package:reown_sign/reown_sign.dart';
 import 'package:reown_sign/utils/sign_api_validator_utils.dart';
@@ -63,6 +68,8 @@ class ReownSign implements IReownSign {
   final IGenericStore<SessionRequest> pendingRequests;
 
   List<SessionProposalCompleter> pendingProposals = [];
+
+  Map<int, TVFData> pendingTVFRequests = {};
 
   @override
   late IGenericStore<AuthPublicKey> authKeys;
@@ -149,6 +156,7 @@ class ReownSign implements IReownSign {
     if (pTopic == null) {
       final CreateResponse newTopicAndUri = await core.pairing.create(
         methods: methods,
+        transportType: TransportType.relay,
       );
       pTopic = newTopicAndUri.topic;
       uri = newTopicAndUri.uri;
@@ -245,7 +253,10 @@ class ReownSign implements IReownSign {
       // Delete the proposal, we are done with it
       await _deleteProposal(requestId);
 
-      await core.relayClient.subscribe(topic: sessionTopic);
+      await core.relayClient.subscribe(
+        topic: sessionTopic,
+        transportType: TransportType.relay,
+      );
       await core.pairing.activate(topic: topic);
     } catch (e) {
       // Get the completer and finish it with an error
@@ -321,7 +332,10 @@ class ReownSign implements IReownSign {
       metadata: proposal.proposer.metadata,
     );
 
-    await core.relayClient.subscribe(topic: sessionTopic);
+    await core.relayClient.subscribe(
+      topic: sessionTopic,
+      transportType: TransportType.relay,
+    );
 
     final int expiry = ReownCoreUtils.calculateExpiry(
       ReownConstants.SEVEN_DAYS,
@@ -490,6 +504,7 @@ class ReownSign implements IReownSign {
 
   @override
   Future<dynamic> request({
+    int? requestId,
     required String topic,
     required String chainId,
     required SessionRequestParams request,
@@ -512,11 +527,17 @@ class ReownSign implements IReownSign {
       request: request,
     );
 
+    final id = requestId ?? JsonRpcUtils.payloadId();
+    final tvf = _collectRequestTVF(id, sessionRequest);
+    core.logger.d('[$runtimeType] _collect Request TVF, id: $id, $tvf');
+
     return await core.pairing.sendRequest(
+      id: id,
       topic,
       MethodConstants.WC_SESSION_REQUEST,
       sessionRequest.toJson(),
       appLink: _getAppLinkIfEnabled(session?.peer.metadata),
+      tvf: tvf,
     );
   }
 
@@ -527,71 +548,17 @@ class ReownSign implements IReownSign {
   }
 
   @override
-  Future<List<dynamic>> requestReadContract({
-    required DeployedContract deployedContract,
-    required String functionName,
-    required String rpcUrl,
-    EthereumAddress? sender,
-    List<dynamic> parameters = const [],
-  }) async {
-    try {
-      final results = await Web3Client(rpcUrl, http.Client()).call(
-        sender: sender,
-        contract: deployedContract,
-        function: deployedContract.function(functionName),
-        params: parameters,
-      );
-
-      return results;
-    } catch (e) {
-      rethrow;
-    }
-  }
-
-  @override
-  Future<dynamic> requestWriteContract({
-    required String topic,
-    required String chainId,
-    required DeployedContract deployedContract,
-    required String functionName,
-    required Transaction transaction,
-    List<dynamic> parameters = const [],
-    String? method,
-  }) async {
-    if (transaction.from == null) {
-      throw Exception('Transaction must include `from` value');
-    }
-
-    final trx = Transaction.callContract(
-      contract: deployedContract,
-      function: deployedContract.function(functionName),
-      from: transaction.from!,
-      value: transaction.value,
-      maxGas: transaction.maxGas,
-      gasPrice: transaction.gasPrice,
-      nonce: transaction.nonce,
-      maxFeePerGas: transaction.maxFeePerGas,
-      maxPriorityFeePerGas: transaction.maxPriorityFeePerGas,
-      parameters: parameters,
-    );
-
-    return await request(
-      topic: topic,
-      chainId: chainId,
-      request: SessionRequestParams(
-        method: method ?? MethodsConstants.ethSendTransaction,
-        params: [trx.toJson()],
-      ),
-    );
-  }
-
-  @override
   Future<void> respondSessionRequest({
     required String topic,
     required JsonRpcResponse response,
   }) async {
     _checkInitialized();
     await _isValidResponse(topic, response);
+
+    final tvf = _collectResponseTVF(response);
+    core.logger.d(
+      '[$runtimeType] _collect Response TVF, id: ${response.id}, $tvf',
+    );
 
     final session = sessions.get(topic);
     final isLinkModeSession = session?.transportType.isLinkMode ?? false;
@@ -608,6 +575,7 @@ class ReownSign implements IReownSign {
         MethodConstants.WC_SESSION_REQUEST,
         response.result,
         appLink: appLink,
+        tvf: tvf,
       );
     } else {
       await core.pairing.sendError(
@@ -616,6 +584,7 @@ class ReownSign implements IReownSign {
         MethodConstants.WC_SESSION_REQUEST,
         response.error!,
         appLink: appLink,
+        tvf: tvf,
       );
     }
 
@@ -847,8 +816,11 @@ class ReownSign implements IReownSign {
 
     // Subscribe to all the sessions
     for (final SessionData session in sessions.getAll()) {
-      // print('Session: subscribing to ${session.topic}');
-      await core.relayClient.subscribe(topic: session.topic);
+      core.logger.i('[$runtimeType] Resubscribe to session: ${session.topic}');
+      await core.relayClient.subscribe(
+        topic: session.topic,
+        transportType: session.transportType,
+      );
     }
   }
 
@@ -1143,7 +1115,9 @@ class ReownSign implements IReownSign {
     JsonRpcRequest payload, [
     _,
   ]) async {
-    // print('wc session settle');
+    core.logger.d(
+      '_onSessionSettleRequest, topic: $topic, payload: $payload',
+    );
     final request = WcSessionSettleRequest.fromJson(payload.params);
     try {
       await _isValidSessionSettleRequest(request.namespaces, request.expiry);
@@ -1361,6 +1335,11 @@ class ReownSign implements IReownSign {
         request.request,
       );
 
+      final tvf = _collectRequestTVF(payload.id, request);
+      core.logger.d(
+        '[$runtimeType] _collect Request TVF, id: ${payload.id}, $tvf',
+      );
+
       final session = sessions.get(topic)!;
       final verifyContext = await _getVerifyContext(
         payload,
@@ -1408,6 +1387,7 @@ class ReownSign implements IReownSign {
             JsonRpcError.fromJson(
               e.toJson(),
             ),
+            tvf: tvf,
           );
           await _deletePendingRequest(payload.id);
         } on ReownSignErrorSilent catch (_) {
@@ -1421,6 +1401,7 @@ class ReownSign implements IReownSign {
             JsonRpcError.invalidParams(
               err.toString(),
             ),
+            tvf: tvf,
           );
           await _deletePendingRequest(payload.id);
         }
@@ -1883,18 +1864,16 @@ class ReownSign implements IReownSign {
     final defaultVerifyUrl = ReownConstants.VERIFY_SERVER;
     final verifyUrl = proposerMetada.verifyUrl ?? defaultVerifyUrl;
 
-    final metadataUri = Uri.tryParse(proposerMetada.url);
-
     try {
+      final metadataUri = Uri.tryParse(proposerMetada.url);
+
       final jsonStringify = jsonEncode(payload.toJson());
       final hash = core.crypto.getUtils().hashMessage(jsonStringify);
       final attestation = await core.verify.resolve(attestationId: hash);
-
       final validation = core.verify.getValidation(
         attestation,
         metadataUri,
       );
-
       final origin = attestation?.origin;
       return VerifyContext(
         origin: (origin ?? metadataUri?.origin) ?? proposerMetada.url,
@@ -1903,13 +1882,12 @@ class ReownSign implements IReownSign {
         isScam: validation == Validation.SCAM,
       );
     } catch (e, s) {
-      if (e is! AttestationNotFound) {
-        core.logger.e('[$runtimeType] verify error', error: e, stackTrace: s);
-      } else {
-        core.logger.d('[$runtimeType] attestation not found');
-      }
+      core.logger.e(
+        '[$runtimeType] VerifyContext error ${e.runtimeType}: $e',
+        stackTrace: s,
+      );
       return VerifyContext(
-        origin: metadataUri?.origin ?? proposerMetada.url,
+        origin: proposerMetada.url,
         verifyUrl: verifyUrl,
         validation: Validation.UNKNOWN,
       );
@@ -2058,15 +2036,16 @@ class ReownSign implements IReownSign {
     final walletUniversalLink = (walletLink ?? '');
     final linkModeApps = core.getLinkModeSupportedApps();
     final containsLink = linkModeApps.contains(walletLink);
-    core.logger.d(
-      '[$runtimeType] _isLinkModeAuthenticate, selfLinkMode: $selfLinkMode, '
-      'selfLink: $selfLink, walletUniversalLink: $walletUniversalLink '
-      'linkModeApps: $linkModeApps, containsLink: $containsLink',
-    );
-    return selfLinkMode &&
+    final isLinkMode = selfLinkMode &&
         selfLink.isNotEmpty &&
         walletUniversalLink.isNotEmpty &&
         containsLink;
+    core.logger.d(
+      '[$runtimeType] _isLinkModeAuthenticate: $isLinkMode, selfLinkMode: $selfLinkMode, '
+      'selfLink: $selfLink, walletUniversalLink: $walletUniversalLink '
+      'linkModeApps: $linkModeApps, containsLink: $containsLink',
+    );
+    return isLinkMode;
   }
 
   @override
@@ -2098,6 +2077,7 @@ class ReownSign implements IReownSign {
     if (pTopic == null) {
       final CreateResponse pairing = await core.pairing.create(
         methods: methods,
+        transportType: transportType,
       );
       pTopic = pairing.topic;
       connectionUri = pairing.uri;
@@ -2135,7 +2115,10 @@ class ReownSign implements IReownSign {
     }
 
     // Subscribe to the responseTopic because we expect the response to use this topic
-    await core.relayClient.subscribe(topic: responseTopic);
+    await core.relayClient.subscribe(
+      topic: responseTopic,
+      transportType: transportType,
+    );
 
     final id = JsonRpcUtils.payloadId();
     final fallbackId = JsonRpcUtils.payloadId();
@@ -2395,7 +2378,11 @@ class ReownSign implements IReownSign {
             isLinkMode ? TransportType.linkMode : TransportType.relay,
       );
 
-      await core.relayClient.subscribe(topic: sessionTopic);
+      await core.relayClient.subscribe(
+        topic: sessionTopic,
+        transportType:
+            isLinkMode ? TransportType.linkMode : TransportType.relay,
+      );
       await sessions.set(sessionTopic, session);
       await core.pairing.updateMetadata(
         topic: pairingTopic,
@@ -2440,6 +2427,11 @@ class ReownSign implements IReownSign {
             transportType: TransportType.linkMode,
           );
         }
+      }
+      if (!matchesLink) {
+        core.logger.i(
+          '[$runtimeType] universal link set in redirect metadata object does not match wallet\'s universal link',
+        );
       }
     }
   }
@@ -2553,7 +2545,10 @@ class ReownSign implements IReownSign {
         transportType: pendingRequest.transportType,
       );
 
-      await core.relayClient.subscribe(topic: sessionTopic);
+      await core.relayClient.subscribe(
+        topic: sessionTopic,
+        transportType: pendingRequest.transportType,
+      );
       await sessions.set(sessionTopic, session);
       await core.pairing.updateMetadata(
         topic: pendingRequest.pairingTopic,
@@ -2831,6 +2826,289 @@ class ReownSign implements IReownSign {
       return true;
     } catch (e) {
       rethrow;
+    }
+  }
+
+  ///
+  /// ******* TVF *********** ///
+  /// collection during request from dapp
+  ///
+  TVFData? _collectRequestTVF(int id, WcSessionRequestRequest request) {
+    final method = request.request.method;
+    // if (!TVFData.tvfRequestMethods.contains(method)) {
+    //   return null;
+    // }
+    final params = request.request.params;
+
+    // params to collect
+    final rpcMethods = List<String>.from([method]);
+    final chainId = request.chainId;
+    List<String>? contractAddresses;
+    final contractAddress = _collectContractAddressIfNeeded(chainId, params);
+    if (contractAddress != null) {
+      contractAddresses = [contractAddress];
+    }
+
+    final tvfData = TVFData(
+      rpcMethods: rpcMethods,
+      chainId: chainId,
+      contractAddresses: contractAddresses,
+      requestParams: request.request.params,
+    );
+
+    // pendingTVFRequests is useful for WalletKit _onSessionRequest method
+    pendingTVFRequests[id] = tvfData;
+
+    // return is useful for AppKit's request() method
+    return tvfData;
+  }
+
+  String? _collectContractAddressIfNeeded(String chainId, dynamic params) {
+    // only EVM request could have `data` parameter for contract call
+    final namespace = NamespaceUtils.getNamespaceFromChain(chainId);
+    if (namespace == 'eip155') {
+      try {
+        final paramsMap = (params as List).first as Map<String, dynamic>;
+        final inputData = (paramsMap['input'] ?? paramsMap['data'])!;
+        if (EvmChainUtils.isValidContractData(inputData)) {
+          final contractAddress = paramsMap['to'] as String?;
+          return contractAddress;
+        }
+      } catch (e) {
+        core.logger.d(
+          '[$runtimeType] invalid contract data, skipping contractAddress collection',
+        );
+      }
+    }
+    return null;
+  }
+
+  ///
+  /// ******* TVF *********** ///
+  /// collection during response from wallet
+  ///
+  TVFData? _collectResponseTVF(JsonRpcResponse payload) {
+    final id = payload.id;
+    if (pendingTVFRequests.containsKey(id)) {
+      final chainId = pendingTVFRequests[id]!.chainId!;
+      final namespace = NamespaceUtils.getNamespaceFromChain(chainId);
+      final tvfData = pendingTVFRequests[id]!.copytWith(
+        txHashes: _collectHashes(namespace, payload),
+      );
+      pendingTVFRequests.remove(id);
+      return tvfData;
+    }
+
+    return null;
+  }
+
+  List<String>? _collectHashes(String namespace, JsonRpcResponse response) {
+    if (response.result == null || response.error != null) {
+      return null;
+    }
+
+    switch (namespace) {
+      case 'solana':
+        try {
+          final result = (response.result as Map<String, dynamic>);
+          // if contain signature it's either solana_signTransaction or solana_signTransaction
+          final signature = ReownCoreUtils.recursiveSearchForMapKey(
+            result,
+            'signature',
+          );
+          if (signature != null) {
+            return List<String>.from([...signature]);
+          }
+          // if contain transactions it's solana_signAllTransactions
+          final transactions = ReownCoreUtils.recursiveSearchForMapKey(
+            result,
+            'transactions',
+          );
+          if (transactions != null) {
+            // Decode transactions and extract signature to send as TVF data
+            final signatures = (transactions as List).map((encodedTx) {
+              return SolanaChainUtils.extractSolanaSignature(encodedTx);
+            }).toList();
+            return signatures;
+          }
+        } catch (e) {
+          core.logger.e('[$runtimeType] _collectHashes: solana, $e');
+        }
+        return null;
+      case 'xrpl':
+        try {
+          final result = (response.result as Map<String, dynamic>);
+          final txHash = ReownCoreUtils.recursiveSearchForMapKey(
+            result,
+            'hash',
+          );
+          if (txHash != null) {
+            return List<String>.from([txHash]);
+          }
+        } catch (e) {
+          core.logger.e('[$runtimeType] _collectHashes: xrpl, $e');
+        }
+        return null;
+      case 'algo':
+        try {
+          final result = (response.result as List);
+          final txHashesList = AlgorandChainUtils.calculateTxIDs(result);
+          return List<String>.from([...txHashesList]);
+        } catch (e) {
+          core.logger.e('[$runtimeType] _collectHashes: algo, $e');
+        }
+        return null;
+      case 'sui':
+        try {
+          final result = (response.result as Map<String, dynamic>);
+          // if sui_signAndExecuteTransaction then it'll contain digest
+          final digest = ReownCoreUtils.recursiveSearchForMapKey(
+            result,
+            'digest',
+          );
+          if (digest != null) {
+            return List<String>.from([digest]);
+          }
+          // if sui_signTransaction the it'll contain signature and transactionBytes
+          final signature = ReownCoreUtils.recursiveSearchForMapKey(
+            result,
+            'signature',
+          );
+          if (signature != null) {
+            final transactionBytes = ReownCoreUtils.recursiveSearchForMapKey(
+              result,
+              'transactionBytes',
+            );
+            if (transactionBytes != null) {
+              final computedHash = SuiChainUtils.getSuiDigestFromEncodedTx(
+                transactionBytes,
+              );
+              return List<String>.from([computedHash]);
+            }
+          }
+        } catch (e) {
+          core.logger.e('[$runtimeType] _collectHashes: sui, $e');
+        }
+        return null;
+      case 'tron':
+        try {
+          final result = (response.result as Map<String, dynamic>);
+          final txID = ReownCoreUtils.recursiveSearchForMapKey(result, 'txID');
+          if (txID != null) {
+            return List<String>.from([txID]);
+          }
+        } catch (e) {
+          core.logger.e('[$runtimeType] _collectHashes: tron, $e');
+        }
+        return null;
+      case 'hedera':
+        try {
+          final result = (response.result as Map<String, dynamic>);
+          final transactionId = ReownCoreUtils.recursiveSearchForMapKey(
+            result,
+            'transactionId',
+          );
+          if (transactionId != null) {
+            return List<String>.from([transactionId]);
+          }
+        } catch (e) {
+          core.logger.e('[$runtimeType] _collectHashes: hedera, $e');
+        }
+        return null;
+      case 'bip122':
+        try {
+          final result = (response.result as Map<String, dynamic>);
+          final txId = ReownCoreUtils.recursiveSearchForMapKey(
+            result,
+            'txid',
+          );
+          return <String>[txId];
+        } catch (e) {
+          core.logger.e('[$runtimeType] _collectHashes: bip122, $e');
+        }
+        return null;
+      case 'stacks':
+        try {
+          final result = (response.result as Map<String, dynamic>);
+          final txId = ReownCoreUtils.recursiveSearchForMapKey(
+            result,
+            'txId',
+          );
+          return List<String>.from([txId]);
+        } catch (e) {
+          core.logger.e('[$runtimeType] _collectHashes: stacks, $e');
+        }
+        return null;
+      case 'near':
+        try {
+          final result = NearChainUtils.parseResponse(response.result);
+          final hash = NearChainUtils.computeNearHashFromTxBytes(result);
+          return <String>[hash];
+        } catch (e) {
+          core.logger.e('[$runtimeType] _collectHashes: near, $e');
+        }
+        return null;
+      case 'polkadot':
+        try {
+          final result = (response.result as Map<String, dynamic>);
+          final signature = ReownCoreUtils.recursiveSearchForMapKey(
+            result,
+            'signature',
+          );
+          if (signature != null) {
+            final id = response.id;
+            final requestParams = pendingTVFRequests[id]!.requestParams;
+            final params = requestParams as Map<String, dynamic>;
+            final payload = ReownCoreUtils.recursiveSearchForMapKey(
+              params,
+              'transactionPayload',
+            );
+            final ss58Address = ReownCoreUtils.recursiveSearchForMapKey(
+              params,
+              'address',
+            );
+            final publicKey = PolkadotChainUtils.ss58AddressToPublicKey(
+              ss58Address,
+            );
+            final extrinsic = PolkadotChainUtils.addSignatureToExtrinsic(
+              publicKey: Uint8List.fromList(publicKey),
+              hexSignature: signature,
+              payload: payload,
+            );
+            final signedHex = hex.encode(extrinsic);
+            final hash = PolkadotChainUtils.deriveExtrinsicHash(signedHex);
+            return List<String>.from([hash]);
+          }
+        } catch (e) {
+          core.logger.e('[$runtimeType] _collectHashes: polkadot, $e');
+        }
+        return null;
+      case 'cosmos':
+        final result = (response.result as Map<String, dynamic>);
+        final signature = ReownCoreUtils.recursiveSearchForMapKey(
+          result,
+          'signature',
+        );
+        if (signature != null) {
+          final bodyBytes = ReownCoreUtils.recursiveSearchForMapKey(
+            result,
+            'bodyBytes',
+          );
+          final authInfoBytes = ReownCoreUtils.recursiveSearchForMapKey(
+            result,
+            'authInfoBytes',
+          );
+          final hash = CosmosUtils.computeTxHash(
+            bodyBytesBase64: bodyBytes,
+            authInfoBytesBase64: authInfoBytes,
+            signatureBase64: signature['signature'],
+          );
+          return List<String>.from([hash]);
+        }
+        return null;
+      default:
+        // default to EVM
+        return <String>[response.result];
     }
   }
 }

@@ -16,21 +16,22 @@ class SecondaryButton extends StatelessWidget {
     final themeColors = ReownAppKitModalTheme.colorsOf(context);
     final radiuses = ReownAppKitModalTheme.radiusesOf(context);
     return BaseButton(
+      semanticsLabel: 'SecondaryButton',
       size: BaseButtonSize.big,
       child: Text(title),
       onTap: onTap,
       buttonStyle: ButtonStyle(
-        backgroundColor: MaterialStateProperty.resolveWith<Color>(
-          (states) => themeColors.grayGlass001,
+        backgroundColor: WidgetStateProperty.resolveWith<Color>(
+          (states) => themeColors.grayGlass002,
         ),
-        foregroundColor: MaterialStateProperty.resolveWith<Color>(
+        foregroundColor: WidgetStateProperty.resolveWith<Color>(
           (states) => themeColors.foreground200,
         ),
-        shape: MaterialStateProperty.resolveWith<RoundedRectangleBorder>(
+        shape: WidgetStateProperty.resolveWith<RoundedRectangleBorder>(
           (states) {
             return RoundedRectangleBorder(
               side: BorderSide(
-                color: themeColors.grayGlass010,
+                color: themeColors.grayGlass002,
                 width: 1.0,
               ),
               borderRadius: radiuses.isSquare()

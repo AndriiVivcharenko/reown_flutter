@@ -68,8 +68,12 @@ class _AccountAvatarState extends State<AccountAvatar> {
 
   void _modalNotifyListener() {
     setState(() {
-      _avatarUrl = widget.appKit.avatarUrl;
-      _address = widget.appKit.session?.address;
+      try {
+        _avatarUrl = widget.appKit.blockchainIdentity?.avatar;
+        final chainId = widget.appKit.selectedChain!.chainId;
+        final namespace = NamespaceUtils.getNamespaceFromChain(chainId);
+        _address = widget.appKit.session?.getAddress(namespace);
+      } catch (_) {}
     });
   }
 }
@@ -97,7 +101,7 @@ class GradientOrb extends StatelessWidget {
             borderRadius: BorderRadius.circular(size / 2.0),
             boxShadow: [
               BoxShadow(
-                color: themeColors.grayGlass025,
+                color: themeColors.grayGlass005,
                 spreadRadius: 1.0,
                 blurRadius: 0.0,
               ),

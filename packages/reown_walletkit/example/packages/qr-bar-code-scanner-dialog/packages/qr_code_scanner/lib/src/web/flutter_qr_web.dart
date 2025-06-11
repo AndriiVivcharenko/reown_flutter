@@ -1,4 +1,4 @@
-// ignore_for_file: avoid_web_libraries_in_flutter, library_private_types_in_public_api
+// ignore_for_file: avoid_web_libraries_in_flutter, library_private_types_in_public_api, deprecated_member_use
 
 import 'dart:async';
 import 'dart:core';
@@ -24,11 +24,11 @@ class WebQrView extends StatefulWidget {
   final CameraFacing? cameraFacing;
 
   const WebQrView({
-    Key? key,
+    super.key,
     required this.onPlatformViewCreated,
     this.onPermissionSet,
     this.cameraFacing = CameraFacing.front,
-  }) : super(key: key);
+  });
 
   @override
   _WebQrViewState createState() => _WebQrViewState();

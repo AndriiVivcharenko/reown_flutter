@@ -8,6 +8,7 @@ class PrimaryButton extends StatelessWidget {
   final bool loading;
   final Color? color;
   final BorderRadiusGeometry? borderRadius;
+  final BaseButtonSize buttonSize;
   const PrimaryButton({
     super.key,
     required this.title,
@@ -15,6 +16,7 @@ class PrimaryButton extends StatelessWidget {
     this.loading = false,
     this.color,
     this.borderRadius,
+    this.buttonSize = BaseButtonSize.big,
   });
 
   @override
@@ -22,7 +24,8 @@ class PrimaryButton extends StatelessWidget {
     final themeColors = ReownAppKitModalTheme.colorsOf(context);
     final radiuses = ReownAppKitModalTheme.radiusesOf(context);
     return BaseButton(
-      size: BaseButtonSize.big,
+      semanticsLabel: 'PrimaryButton',
+      size: buttonSize,
       child: loading
           ? SizedBox(
               height: BaseButtonSize.big.height * 0.4,
@@ -35,23 +38,23 @@ class PrimaryButton extends StatelessWidget {
           : Text(title),
       onTap: loading ? null : onTap,
       buttonStyle: ButtonStyle(
-        backgroundColor: MaterialStateProperty.resolveWith<Color>(
+        backgroundColor: WidgetStateProperty.resolveWith<Color>(
           (states) {
-            if (states.contains(MaterialState.disabled)) {
+            if (states.contains(WidgetState.disabled)) {
               return themeColors.grayGlass010;
             }
             return color ?? themeColors.accent100;
           },
         ),
-        foregroundColor: MaterialStateProperty.resolveWith<Color>(
+        foregroundColor: WidgetStateProperty.resolveWith<Color>(
           (states) {
-            if (states.contains(MaterialState.disabled)) {
+            if (states.contains(WidgetState.disabled)) {
               return themeColors.foreground200;
             }
             return themeColors.inverse100;
           },
         ),
-        shape: MaterialStateProperty.resolveWith<RoundedRectangleBorder>(
+        shape: WidgetStateProperty.resolveWith<RoundedRectangleBorder>(
           (states) {
             return RoundedRectangleBorder(
               side: BorderSide(

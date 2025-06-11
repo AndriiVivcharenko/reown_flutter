@@ -1,12 +1,14 @@
 import 'dart:convert';
-import 'package:bs58/bs58.dart';
-import 'package:solana_web3/solana_web3.dart' as solana;
+
 import 'package:reown_appkit/reown_appkit.dart';
-import 'package:reown_appkit_dapp/models/chain_metadata.dart';
+import 'package:reown_appkit/solana/solana_web3/solana_web3.dart' as solana;
+import 'package:reown_appkit/solana/solana_web3/programs.dart' as programs;
 
 enum SolanaMethods {
-  solanaSignTransaction,
   solanaSignMessage,
+  solanaSignTransaction,
+  solanaSignAndSendTransaction,
+  solanaSignAllTransactions,
 }
 
 enum SolanaEvents {
@@ -15,99 +17,101 @@ enum SolanaEvents {
 
 class Solana {
   static final Map<SolanaMethods, String> methods = {
+    SolanaMethods.solanaSignMessage: 'solana_signMessage',
     SolanaMethods.solanaSignTransaction: 'solana_signTransaction',
-    SolanaMethods.solanaSignMessage: 'solana_signMessage'
+    SolanaMethods.solanaSignAndSendTransaction: 'solana_signAndSendTransaction',
+    SolanaMethods.solanaSignAllTransactions: 'solana_signAllTransactions'
   };
 
-  static final Map<SolanaEvents, String> events = {};
+  static final List<String> events = [];
 
-  static Future<dynamic> callMethod({
-    required IReownAppKit appKit,
-    required String topic,
-    required String method,
-    required ChainMetadata chainData,
-    required String address,
-  }) async {
-    switch (method) {
-      case 'solana_signMessage':
-        final bytes = utf8.encode(
-          'This is an example message to be signed - ${DateTime.now()}',
-        );
-        final message = base58.encode(bytes);
-        return appKit.request(
-          topic: topic,
-          chainId: chainData.chainId,
-          request: SessionRequestParams(
-            method: method,
-            params: {
+  static String personalSignMessage() {
+    final bytes = utf8.encode('Welcome to Flutter AppKit on Solana');
+    return base58.encode(bytes);
+  }
+
+  static Future<solana.Transaction> constructSolanaTX(
+    String address,
+    ReownAppKitModalNetworkInfo chainData,
+  ) async {
+    // Create a connection to the devnet cluster.
+    final cluster = solana.Cluster.https(
+      Uri.parse(chainData.rpcUrl).authority,
+    );
+    // final cluster = solana.Cluster.devnet;
+    final connection = solana.Connection(cluster);
+
+    // Fetch the latest blockhash.
+    final blockhash = await connection.getLatestBlockhash();
+
+    // Create a System Program instruction to transfer 0.5 SOL from [address1] to [address2].
+    final transactionv0 = solana.Transaction.v0(
+      payer: solana.Pubkey.fromBase58(address),
+      recentBlockhash: blockhash.blockhash,
+      instructions: [
+        solana.TransactionInstruction.fromJson({
+          'programId': '11111111111111111111111111111111',
+          'data': [2, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0],
+          'keys': [
+            {
+              'isSigner': true,
+              'isWritable': true,
               'pubkey': address,
-              'message': message,
             },
-          ),
-        );
-      case 'solana_signTransaction':
-        // Create a connection to the devnet cluster.
-        final cluster = solana.Cluster.https(
-          Uri.parse(chainData.rpc.first).authority,
-        );
-        // final cluster = solana.Cluster.devnet;
-        final connection = solana.Connection(cluster);
+            {
+              'isSigner': false,
+              'isWritable': true,
+              'pubkey': address, // should be recipient address
+            }
+          ]
+        }),
+      ],
+    );
 
-        // Fetch the latest blockhash.
-        final blockhash = await connection.getLatestBlockhash();
+    return transactionv0;
+  }
 
-        // Create a System Program instruction to transfer 0.5 SOL from [address1] to [address2].
-        final transactionv0 = solana.Transaction.v0(
-          payer: solana.Pubkey.fromBase58(address),
-          recentBlockhash: blockhash.blockhash,
-          instructions: [
-            solana.TransactionInstruction.fromJson({
-              'programId': '11111111111111111111111111111111',
-              'data': [2, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0],
-              'keys': [
-                {
-                  'isSigner': true,
-                  'isWritable': true,
-                  'pubkey': address,
-                },
-                {
-                  'isSigner': false,
-                  'isWritable': true,
-                  'pubkey': '8vCyX7oB6Pc3pbWMGYYZF5pbSnAdQ7Gyr32JqxqCy8ZR'
-                }
-              ]
-            }),
-            // SystemProgram.transfer(
-            //   fromPubkey: solana.Pubkey.fromBase58(address),
-            //   toPubkey: solana.Pubkey.fromBase58(
-            //     '8vCyX7oB6Pc3pbWMGYYZF5pbSnAdQ7Gyr32JqxqCy8ZR',
-            //   ),
-            //   lamports: solana.solToLamports(0.5),
-            // ),
-          ],
-        );
+  static Future<solana.Transaction> constructSolanaTX2(
+    String address,
+    ReownAppKitModalNetworkInfo chainData,
+  ) async {
+    // Create a connection to the devnet cluster.
+    final cluster = solana.Cluster.https(
+      Uri.parse(chainData.rpcUrl).authority,
+    );
+    // final cluster = solana.Cluster.devnet;
+    final connection = solana.Connection(cluster);
 
-        const config = solana.TransactionSerializableConfig(
-          verifySignatures: false,
-        );
-        final bytes = transactionv0.serialize(config).asUint8List();
-        final encodedV0Trx = base64.encode(bytes);
+    // Fetch the latest blockhash.
+    final blockhash = await connection.getLatestBlockhash();
 
-        return appKit.request(
-          topic: topic,
-          chainId: chainData.chainId,
-          request: SessionRequestParams(
-            method: method,
-            params: {
-              'transaction': encodedV0Trx,
-              'pubkey': address,
-              'feePayer': address,
-              ...transactionv0.message.toJson(),
-            },
-          ),
-        );
-      default:
-        throw 'Method unimplemented';
-    }
+    // Define transfer amount in lamports (1 SOL = 1,000,000,000 lamports)
+    // Amount to send in lamports (0.01 SOL)
+    final lamports = BigInt.from(10000000);
+
+    // Create the transfer instruction
+    final transferInstruction = programs.SystemProgram.transfer(
+      fromPubkey: solana.Pubkey.fromBase58(address),
+      toPubkey: solana.Pubkey.fromBase58(address),
+      lamports: lamports,
+    );
+
+    final transactionv0 = solana.Transaction.v0(
+      payer: solana.Pubkey.fromBase58(address),
+      recentBlockhash: blockhash.blockhash,
+      instructions: [
+        transferInstruction,
+      ],
+    );
+
+    return transactionv0;
+  }
+
+  static String serializeTransaction(solana.Transaction transaction) {
+    const config = solana.TransactionSerializableConfig(
+      verifySignatures: false,
+    );
+    final bytes = transaction.serialize(config).asUint8List();
+    return base64.encode(bytes);
   }
 }

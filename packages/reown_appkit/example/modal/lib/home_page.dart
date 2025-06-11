@@ -1,19 +1,18 @@
-import 'dart:developer';
+import 'dart:convert';
 
-import 'package:fl_toast/fl_toast.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:reown_appkit_example/services/deep_link_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:reown_appkit/reown_appkit.dart';
-
 import 'package:reown_appkit_example/widgets/debug_drawer.dart';
 import 'package:reown_appkit_example/utils/constants.dart';
 import 'package:reown_appkit_example/services/siwe_service.dart';
 import 'package:reown_appkit_example/widgets/logger_widget.dart';
 import 'package:reown_appkit_example/widgets/session_widget.dart';
 import 'package:reown_appkit_example/utils/dart_defines.dart';
+import 'package:toastification/toastification.dart';
 
 class MyHomePage extends StatefulWidget {
   const MyHomePage({
@@ -34,18 +33,18 @@ class MyHomePage extends StatefulWidget {
 }
 
 class _MyHomePageState extends State<MyHomePage> {
-  final overlay = OverlayController(const Duration(milliseconds: 200));
-  late ReownAppKitModal _appKitModal;
+  late OverlayController overlay;
+  ReownAppKitModal? _appKitModal;
   late SIWESampleWebService _siweTestService;
   bool _initialized = false;
+  bool _initializing = false;
 
   @override
   void initState() {
     super.initState();
     _siweTestService = SIWESampleWebService();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _toggleOverlay();
-      _initializeService(widget.prefs);
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await _initializeService(widget.prefs);
     });
   }
 
@@ -54,8 +53,6 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 
   String get _flavor {
-    // String flavor = '-${const String.fromEnvironment('FLUTTER_APP_FLAVOR')}';
-    // return flavor.replaceAll('-production', '');
     final internal = widget.bundleId.endsWith('.internal');
     final debug = widget.bundleId.endsWith('.debug');
     if (internal || debug || kDebugMode) {
@@ -94,6 +91,7 @@ class _MyHomePageState extends State<MyHomePage> {
     );
   }
 
+  // ignore: unused_element
   SIWEConfig _siweConfig(bool enabled) => SIWEConfig(
         getNonce: () async {
           // this has to be called at the very moment of creating the pairing uri
@@ -168,8 +166,9 @@ class _MyHomePageState extends State<MyHomePage> {
           } catch (error) {
             debugPrint('[SIWEConfig] getSession error: $error');
             // Fallback patch for testing purposes in case SIWE backend has issues
-            final address = _appKitModal.session!.address!;
-            final chainId = _appKitModal.session!.chainId;
+            final chainId = _appKitModal!.selectedChain!.chainId;
+            final namespace = NamespaceUtils.getNamespaceFromChain(chainId);
+            final address = _appKitModal!.session!.getAddress(namespace)!;
             return SIWESession(address: address, chains: [chainId]);
           }
         },
@@ -201,35 +200,83 @@ class _MyHomePageState extends State<MyHomePage> {
         // sessionRefetchIntervalMs: 300000,
       );
 
-  void _initializeService(SharedPreferences prefs) async {
+  FeaturesConfig? _featuresConfig() {
+    return FeaturesConfig(
+      socials: [
+        AppKitSocialOption.Email,
+        AppKitSocialOption.X,
+        AppKitSocialOption.Google,
+        AppKitSocialOption.Apple,
+        AppKitSocialOption.Discord,
+        AppKitSocialOption.GitHub,
+        AppKitSocialOption.Facebook,
+        AppKitSocialOption.Twitch,
+        AppKitSocialOption.Telegram,
+      ],
+      showMainWallets: true, // OPTIONAL - true by default
+    );
+  }
+
+  Future<void> _initializeService(SharedPreferences prefs) async {
+    _initialized = false;
+    _initializing = true;
     final analyticsValue = prefs.getBool('appkit_analytics') ?? true;
+    // ignore: unused_local_variable
     final emailWalletValue = prefs.getBool('appkit_email_wallet') ?? true;
     final siweAuthValue = prefs.getBool('appkit_siwe_auth') ?? true;
 
     // See https://docs.reown.com/appkit/flutter/core/custom-chains
-    final testNetworks = ReownAppKitModalNetworks.test['eip155'] ?? [];
-    ReownAppKitModalNetworks.addNetworks('eip155', testNetworks);
+    // Add extra chains
+    // final extraChains = ReownAppKitModalNetworks.extra['eip155']!;
+    // ReownAppKitModalNetworks.addSupportedNetworks('eip155', extraChains);
+    // Remove every test network
+    // ReownAppKitModalNetworks.removeTestNetworks();
+
+    ReownAppKitModalNetworks.addSupportedNetworks('eip155', [
+      ReownAppKitModalNetworkInfo(
+        name: 'Base Sepolia',
+        chainId: '84531',
+        currency: 'SEP',
+        rpcUrl: 'https://sepolia.base.org',
+        explorerUrl: 'https://sepolia.basescan.org/',
+        isTestNetwork: true,
+      ),
+    ]);
+    if (siweAuthValue) {
+      // Remove Solana support
+      ReownAppKitModalNetworks.removeSupportedNetworks('solana');
+    } else {
+      // Add custom chains
+      ReownAppKitModalNetworks.addSupportedNetworks('polkadot', [
+        ReownAppKitModalNetworkInfo(
+          name: 'Polkadot',
+          chainId: '91b171bb158e2d3848fa23a9f1c25182',
+          chainIcon: 'https://cryptologos.cc/logos/polkadot-new-dot-logo.png',
+          currency: 'DOT',
+          rpcUrl: 'https://rpc.polkadot.io',
+          explorerUrl: 'https://polkadot.subscan.io',
+        ),
+        ReownAppKitModalNetworkInfo(
+          name: 'Westend',
+          chainId: 'e143f23803ac50e8f6f8e62695d1ce9e',
+          currency: 'DOT',
+          rpcUrl: 'wss://westend-asset-hub-rpc.polkadot.io',
+          explorerUrl: 'https://westend.subscan.io',
+          isTestNetwork: true,
+        ),
+      ]);
+    }
 
     try {
       _appKitModal = ReownAppKitModal(
         context: context,
         projectId: DartDefines.projectId,
-        logLevel: LogLevel.error,
+        logLevel: LogLevel.all,
+        disconnectOnDispose: false,
         metadata: _pairingMetadata(),
-        siweConfig: _siweConfig(siweAuthValue),
+        // siweConfig: _siweConfig(siweAuthValue),
+        featuresConfig: emailWalletValue ? _featuresConfig() : null,
         enableAnalytics: analyticsValue, // OPTIONAL - null by default
-        featuresConfig: FeaturesConfig(
-          email: emailWalletValue,
-          socials: [
-            AppKitSocialOption.Farcaster,
-            AppKitSocialOption.X,
-            AppKitSocialOption.Apple,
-            AppKitSocialOption.Discord,
-          ],
-          showMainWallets: true, // OPTIONAL - true by default
-        ),
-        // requiredNamespaces: {},
-        // optionalNamespaces: {},
         // includedWalletIds: {},
         featuredWalletIds: {
           'fd20dc426fb37566d803205b19bbc1d4096b248ac04548e3cfb6b3a38bd033aa', // Coinbase
@@ -239,86 +286,146 @@ class _MyHomePageState extends State<MyHomePage> {
           'c03dfee351b6fcc421b4494ea33b9d4b92a984f87aa76d1663bb28705e95034a', // Uniswap
           '38f5d18bd8522c244bdd70cb4a68e0e718865155811c043f052fb9f1c51de662', // Bitget
         },
-        // excludedWalletIds: {
-        //   'fd20dc426fb37566d803205b19bbc1d4096b248ac04548e3cfb6b3a38bd033aa', // Coinbase
-        // },
+        // excludedWalletIds: {},
         // MORE WALLETS https://explorer.walletconnect.com/?type=wallet&chains=eip155%3A1
+        // getBalanceFallback: () async {
+        //   // This method will be triggered if getting the balance from our blockchain API fails
+        //   // You could place here your own getBalance method
+        //   return 0.123;
+        // },
+        // requiredNamespaces: {},
+        optionalNamespaces: siweAuthValue
+            ? null
+            : {
+                'eip155': RequiredNamespace.fromJson({
+                  'chains': ReownAppKitModalNetworks.getAllSupportedNetworks(
+                    namespace: 'eip155',
+                  ).map((chain) => chain.chainId).toList(),
+                  'methods':
+                      NetworkUtils.defaultNetworkMethods['eip155']!.toList(),
+                  'events':
+                      NetworkUtils.defaultNetworkEvents['eip155']!.toList(),
+                }),
+                'solana': RequiredNamespace.fromJson({
+                  'chains': ReownAppKitModalNetworks.getAllSupportedNetworks(
+                    namespace: 'solana',
+                  ).map((chain) => chain.chainId).toList(),
+                  'methods':
+                      NetworkUtils.defaultNetworkMethods['solana']!.toList(),
+                  'events': [],
+                }),
+                'polkadot': RequiredNamespace.fromJson({
+                  'chains': ReownAppKitModalNetworks.getAllSupportedNetworks(
+                    namespace: 'polkadot',
+                  ).map((chain) => chain.chainId).toList(),
+                  'methods': [
+                    'polkadot_signMessage',
+                    'polkadot_signTransaction',
+                  ],
+                  'events': [],
+                }),
+              },
       );
+      overlay = OverlayController(
+        const Duration(milliseconds: 200),
+        appKitModal: _appKitModal!,
+      );
+      _toggleOverlay();
       setState(() => _initialized = true);
     } on ReownAppKitModalException catch (e) {
       debugPrint('⛔️ ${e.message}');
       return;
     }
-    // modal specific subscriptions
-    _appKitModal.onModalConnect.subscribe(_onModalConnect);
-    _appKitModal.onModalUpdate.subscribe(_onModalUpdate);
-    _appKitModal.onModalNetworkChange.subscribe(_onModalNetworkChange);
-    _appKitModal.onModalDisconnect.subscribe(_onModalDisconnect);
-    _appKitModal.onModalError.subscribe(_onModalError);
-    // session related subscriptions
-    _appKitModal.onSessionExpireEvent.subscribe(_onSessionExpired);
-    _appKitModal.onSessionUpdateEvent.subscribe(_onSessionUpdate);
-    _appKitModal.onSessionEventEvent.subscribe(_onSessionEvent);
-    // relayClient subscriptions
-    _appKitModal.appKit!.core.relayClient.onRelayClientConnect.subscribe(
-      _onRelayClientConnect,
-    );
-    _appKitModal.appKit!.core.relayClient.onRelayClientError.subscribe(
-      _onRelayClientError,
-    );
-    _appKitModal.appKit!.core.relayClient.onRelayClientDisconnect.subscribe(
-      _onRelayClientDisconnect,
-    );
-    _appKitModal.appKit!.core.addLogListener(_logListener);
-    //
-    await _appKitModal.init();
+    await _attachListenersAndInit();
 
-    DeepLinkHandler.init(_appKitModal);
+    DeepLinkHandler.init(_appKitModal!);
     DeepLinkHandler.checkInitialLink();
+    _initializing = false;
 
     setState(() {});
   }
 
-  void _logListener(event) {
-    if ('${event.level}' == 'Level.debug' ||
-        '${event.level}' == 'Level.error') {
-      // TODO send to mixpanel
-      log('${event.message}');
-    } else {
-      debugPrint('${event.message}');
+  void _logListener(String event) {
+    debugPrint('[AppKit] $event');
+  }
+
+  void _connectivity() async {
+    final connected = _appKitModal!.appKit!.core.connectivity.isOnline.value;
+    if (connected && !_appKitModal!.status.isInitialized && !_initializing) {
+      debugPrint('connected: $connected, ${_appKitModal!.status}');
+      _initializing = true;
+      await _removeListenersAndDispose();
+      await _initializeService(widget.prefs);
     }
+  }
+
+  Future<void> _attachListenersAndInit() async {
+    _appKitModal!.appKit!.core.addLogListener(_logListener);
+    // modal specific subscriptions
+    _appKitModal!.onModalConnect.subscribe(_onModalConnect);
+    _appKitModal!.onModalUpdate.subscribe(_onModalUpdate);
+    _appKitModal!.onModalNetworkChange.subscribe(_onModalNetworkChange);
+    _appKitModal!.onModalDisconnect.subscribe(_onModalDisconnect);
+    _appKitModal!.onModalError.subscribe(_onModalError);
+    // session related subscriptions
+    _appKitModal!.onSessionExpireEvent.subscribe(_onSessionExpired);
+    _appKitModal!.onSessionUpdateEvent.subscribe(_onSessionUpdate);
+    _appKitModal!.onSessionEventEvent.subscribe(_onSessionEvent);
+    // relayClient subscriptions
+    _appKitModal!.appKit!.core.relayClient.onRelayClientConnect.subscribe(
+      _onRelayClientConnect,
+    );
+    _appKitModal!.appKit!.core.relayClient.onRelayClientError.subscribe(
+      _onRelayClientError,
+    );
+    _appKitModal!.appKit!.core.relayClient.onRelayClientDisconnect.subscribe(
+      _onRelayClientDisconnect,
+    );
+    _appKitModal!.appKit!.core.connectivity.isOnline.addListener(_connectivity);
+    //
+    await _appKitModal!.init();
+  }
+
+  Future<void> _removeListenersAndDispose() async {
+    _appKitModal!.appKit!.core.removeLogListener(_logListener);
+    //
+    _appKitModal!.appKit!.core.relayClient.onRelayClientConnect.unsubscribe(
+      _onRelayClientConnect,
+    );
+    _appKitModal!.appKit!.core.relayClient.onRelayClientError.unsubscribe(
+      _onRelayClientError,
+    );
+    _appKitModal!.appKit!.core.relayClient.onRelayClientDisconnect.unsubscribe(
+      _onRelayClientDisconnect,
+    );
+    //
+    _appKitModal!.onModalConnect.unsubscribe(_onModalConnect);
+    _appKitModal!.onModalUpdate.unsubscribe(_onModalUpdate);
+    _appKitModal!.onModalNetworkChange.unsubscribe(_onModalNetworkChange);
+    _appKitModal!.onModalDisconnect.unsubscribe(_onModalDisconnect);
+    _appKitModal!.onModalError.unsubscribe(_onModalError);
+    //
+    _appKitModal!.onSessionExpireEvent.unsubscribe(_onSessionExpired);
+    _appKitModal!.onSessionUpdateEvent.unsubscribe(_onSessionUpdate);
+    _appKitModal!.onSessionEventEvent.unsubscribe(_onSessionEvent);
+    //
+    _appKitModal!.appKit!.core.connectivity.isOnline.removeListener(
+      _connectivity,
+    );
+    await _appKitModal!.dispose();
+    _appKitModal = null;
+    _initialized = false;
   }
 
   @override
   void dispose() {
-    //
-    _appKitModal.appKit!.core.removeLogListener(_logListener);
-    _appKitModal.appKit!.core.relayClient.onRelayClientConnect.unsubscribe(
-      _onRelayClientConnect,
-    );
-    _appKitModal.appKit!.core.relayClient.onRelayClientError.unsubscribe(
-      _onRelayClientError,
-    );
-    _appKitModal.appKit!.core.relayClient.onRelayClientDisconnect.unsubscribe(
-      _onRelayClientDisconnect,
-    );
-    //
-    _appKitModal.onModalConnect.unsubscribe(_onModalConnect);
-    _appKitModal.onModalUpdate.unsubscribe(_onModalUpdate);
-    _appKitModal.onModalNetworkChange.unsubscribe(_onModalNetworkChange);
-    _appKitModal.onModalDisconnect.unsubscribe(_onModalDisconnect);
-    _appKitModal.onModalError.unsubscribe(_onModalError);
-    //
-    _appKitModal.onSessionExpireEvent.unsubscribe(_onSessionExpired);
-    _appKitModal.onSessionUpdateEvent.unsubscribe(_onSessionUpdate);
-    _appKitModal.onSessionEventEvent.unsubscribe(_onSessionEvent);
-    //
+    _removeListenersAndDispose();
     super.dispose();
   }
 
   void _onModalConnect(ModalConnect? event) async {
     setState(() {});
-    debugPrint('[ExampleApp] _onModalConnect ${event?.session.toJson()}');
+    log('[ExampleApp] _onModalConnect ${jsonEncode(event?.session.toJson())}');
   }
 
   void _onModalUpdate(ModalConnect? event) {
@@ -326,22 +433,23 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 
   void _onModalNetworkChange(ModalNetworkChange? event) {
-    debugPrint('[ExampleApp] _onModalNetworkChange ${event?.toString()}');
+    log('[ExampleApp] _onModalNetworkChange ${event?.toString()}');
     setState(() {});
   }
 
   void _onModalDisconnect(ModalDisconnect? event) {
-    debugPrint('[ExampleApp] _onModalDisconnect ${event?.toString()}');
+    log('[ExampleApp] _onModalDisconnect ${event?.toString()}');
     setState(() {});
+    _appKitModal!.openModalView();
   }
 
   void _onModalError(ModalError? event) {
-    debugPrint('[ExampleApp] _onModalError ${event?.toString()}');
+    log('[ExampleApp] _onModalError ${event?.toString()}');
     // When user connected to Coinbase Wallet but Coinbase Wallet does not have a session anymore
     // (for instance if user disconnected the dapp directly within Coinbase Wallet)
     // Then Coinbase Wallet won't emit any event
     if ((event?.message ?? '').contains('Coinbase Wallet Error')) {
-      _appKitModal.disconnect();
+      _appKitModal!.disconnect();
     }
     setState(() {});
   }
@@ -363,19 +471,31 @@ class _MyHomePageState extends State<MyHomePage> {
 
   void _onRelayClientConnect(EventArgs? event) {
     setState(() {});
-    showTextToast(text: 'Relay connected', context: context);
+    toastification.show(
+      title: Text('Relay connected'),
+      context: context,
+      autoCloseDuration: Duration(seconds: 2),
+      alignment: Alignment.bottomCenter,
+    );
   }
 
-  void _onRelayClientError(EventArgs? event) {
+  void _onRelayClientError(ErrorEvent? event) {
     setState(() {});
-    showTextToast(text: 'Relay disconnected', context: context);
+    toastification.show(
+      title: Text('Relay error: ${event?.error}'),
+      context: context,
+      autoCloseDuration: Duration(seconds: 2),
+      alignment: Alignment.bottomCenter,
+    );
   }
 
   void _onRelayClientDisconnect(EventArgs? event) {
     setState(() {});
-    showTextToast(
-      text: 'Relay disconnected: ${event?.toString()}',
+    toastification.show(
+      title: Text('Relay disconnected: ${event?.toString()}'),
       context: context,
+      autoCloseDuration: Duration(seconds: 2),
+      alignment: Alignment.bottomCenter,
     );
   }
 
@@ -401,8 +521,8 @@ class _MyHomePageState extends State<MyHomePage> {
                   mainAxisAlignment: MainAxisAlignment.start,
                   children: [
                     const SizedBox.square(dimension: 6.0),
-                    _ButtonsView(appKit: _appKitModal),
-                    _ConnectedView(appKit: _appKitModal),
+                    _ButtonsView(appKit: _appKitModal!),
+                    _ConnectedView(appKit: _appKitModal!),
                   ],
                 ),
               ),
@@ -413,7 +533,7 @@ class _MyHomePageState extends State<MyHomePage> {
           toggleOverlay: _toggleOverlay,
           toggleBrightness: widget.toggleBrightness,
           toggleTheme: widget.toggleTheme,
-          appKitModal: _appKitModal,
+          appKitModal: _appKitModal!,
         ),
       ),
       onEndDrawerChanged: (isOpen) {
@@ -433,7 +553,7 @@ class _MyHomePageState extends State<MyHomePage> {
       // floatingActionButton: CircleAvatar(
       //   radius: 6.0,
       //   backgroundColor: _initialized &&
-      //           _appKitModal.appKit?.core.relayClient.isConnected == true
+      //           _appKitModal!.appKit?.core.relayClient.isConnected == true
       //       ? Colors.green
       //       : Colors.red,
       // ),
@@ -441,8 +561,8 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 
   Future<void> _refreshData() async {
-    await _appKitModal.reconnectRelay();
-    await _appKitModal.loadAccountData();
+    await _appKitModal!.reconnectRelay();
+    await _appKitModal!.loadAccountData();
     setState(() {});
   }
 }
@@ -453,37 +573,43 @@ class _ButtonsView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        AppKitModalNetworkSelectButton(
-          appKit: appKit,
-          // UNCOMMENT TO USE A CUSTOM BUTTON
-          // custom: ElevatedButton(
-          //   onPressed: () {
-          //     appKit.openNetworksView();
-          //   },
-          //   child: Text(appKit.selectedChain?.name ?? 'OPEN CHAINS'),
-          // ),
+    return Center(
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            AppKitModalNetworkSelectButton(
+              appKit: appKit,
+              // UNCOMMENT TO USE A CUSTOM BUTTON
+              // custom: ElevatedButton(
+              //   onPressed: () {
+              //     appKit.openNetworksView();
+              //   },
+              //   child: Text(appKit.selectedChain?.name ?? 'OPEN CHAINS'),
+              // ),
+            ),
+            const SizedBox.square(dimension: 6.0),
+            AppKitModalConnectButton(
+              appKit: appKit,
+              // UNCOMMENT TO USE A CUSTOM BUTTON
+              // TO HIDE AppKitModalConnectButton BUT STILL RENDER IT (NEEDED) JUST USE SizedBox.shrink()
+              custom: ElevatedButton(
+                onPressed: () {
+                  // appKit.openModalView(ReownAppKitModalQRCodePage());
+                  // appKit.openModalView(ReownAppKitModalSelectNetworkPage());
+                  // appKit.openModalView(ReownAppKitModalAllWalletsPage());
+                  appKit.openModalView(ReownAppKitModalMainWalletsPage());
+                },
+                child: appKit.isConnected
+                    ? Text(
+                        '${appKit.session!.getAddress('eip155')!.substring(0, 7)}...')
+                    : const Text('CONNECT WALLET'),
+              ),
+            ),
+          ],
         ),
-        const SizedBox.square(dimension: 6.0),
-        AppKitModalConnectButton(
-          appKit: appKit,
-          // UNCOMMENT TO USE A CUSTOM BUTTON
-          // TO HIDE AppKitModalConnectButton BUT STILL RENDER IT (NEEDED) JUST USE SizedBox.shrink()
-          // custom: ElevatedButton(
-          //   onPressed: () {
-          //     // appKit.openModalView(ReownAppKitModalQRCodePage());
-          //     // appKit.openModalView(ReownAppKitModalSelectNetworkPage());
-          //     // appKit.openModalView(ReownAppKitModalAllWalletsPage());
-          //     // appKit.openModalView(ReownAppKitModalMainWalletsPage());
-          //   },
-          //   child: appKit.isConnected
-          //       ? Text('${appKit.session!.address!.substring(0, 7)}...')
-          //       : const Text('CONNECT WALLET'),
-          // ),
-        ),
-      ],
+      ),
     );
   }
 }
@@ -501,7 +627,7 @@ class _ConnectedView extends StatelessWidget {
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
         AppKitModalAccountButton(
-          appKit: appKit,
+          appKitModal: appKit,
           // custom: ValueListenableBuilder<String>(
           //   valueListenable: appKit.balanceNotifier,
           //   builder: (_, balance, __) {
@@ -519,7 +645,7 @@ class _ConnectedView extends StatelessWidget {
           children: [
             AppKitModalBalanceButton(
               appKitModal: appKit,
-              onTap: appKit.openModalView,
+              onTap: appKit.openNetworksView,
             ),
             const SizedBox.square(dimension: 8.0),
             AppKitModalAddressButton(

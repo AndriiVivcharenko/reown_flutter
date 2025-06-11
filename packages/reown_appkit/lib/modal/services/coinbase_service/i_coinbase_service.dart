@@ -21,6 +21,8 @@ class CoinbaseNotEnabledException extends CoinbaseServiceException {
 }
 
 abstract class ICoinbaseService {
+  List<String> get supportedMethods;
+
   Future<void> init();
   Future<bool> isConnected();
   Future<void> getAccount();
@@ -34,7 +36,7 @@ abstract class ICoinbaseService {
   Future<String> get ownPublicKey;
   Future<String> get peerPublicKey;
 
-  ConnectionMetadata get metadata;
+  ConnectionMetadata get walletMetadata;
 
   abstract final Event<CoinbaseConnectEvent> onCoinbaseConnect;
   abstract final Event<CoinbaseErrorEvent> onCoinbaseError;

@@ -1,9 +1,7 @@
 import 'dart:async';
 
-import 'package:fl_toast/fl_toast.dart';
 import 'package:flutter/material.dart';
 import 'package:get_it/get_it.dart';
-import 'package:get_it_mixin/get_it_mixin.dart';
 import 'package:qr_bar_code_scanner_dialog/qr_bar_code_scanner_dialog.dart';
 import 'package:reown_walletkit/reown_walletkit.dart';
 import 'package:reown_walletkit_wallet/dependencies/bottom_sheet/i_bottom_sheet_service.dart';
@@ -12,18 +10,22 @@ import 'package:reown_walletkit_wallet/dependencies/i_walletkit_service.dart';
 import 'package:reown_walletkit_wallet/pages/app_detail_page.dart';
 import 'package:reown_walletkit_wallet/utils/constants.dart';
 import 'package:reown_walletkit_wallet/utils/eth_utils.dart';
-import 'package:reown_walletkit_wallet/utils/string_constants.dart';
 import 'package:reown_walletkit_wallet/widgets/pairing_item.dart';
 import 'package:reown_walletkit_wallet/widgets/uri_input_popup.dart';
+import 'package:toastification/toastification.dart';
 
-class AppsPage extends StatefulWidget with GetItStatefulWidgetMixin {
-  AppsPage({Key? key}) : super(key: key);
+class AppsPage extends StatefulWidget {
+  AppsPage({
+    super.key,
+    required this.isDarkMode,
+  });
+  final bool isDarkMode;
 
   @override
   AppsPageState createState() => AppsPageState();
 }
 
-class AppsPageState extends State<AppsPage> with GetItStateMixin {
+class AppsPageState extends State<AppsPage> with WidgetsBindingObserver {
   List<PairingInfo> _pairings = [];
   late IWalletKitService _walletKitService;
   late IReownWalletKit _walletKit;
@@ -37,8 +39,6 @@ class AppsPageState extends State<AppsPage> with GetItStateMixin {
     _pairings = _pairings.where((p) => p.active).toList();
     //
     _registerListeners();
-    // TODO _walletKit.core.echo.register(firebaseAccessToken);
-    DeepLinkHandler.checkInitialLink();
   }
 
   void _registerListeners() {
@@ -64,6 +64,7 @@ class AppsPageState extends State<AppsPage> with GetItStateMixin {
   @override
   void dispose() {
     _unregisterListeners();
+    WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
 
@@ -78,18 +79,11 @@ class AppsPageState extends State<AppsPage> with GetItStateMixin {
       if (!mounted) return;
       if (jsonObject is JsonRpcRequest &&
           jsonObject.method == MethodConstants.WC_SESSION_PING) {
-        showPlatformToast(
-          duration: const Duration(seconds: 1),
-          child: Container(
-            padding: const EdgeInsets.all(StyleConstants.linear8),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(
-                StyleConstants.linear16,
-              ),
-            ),
-            child: Text(jsonObject.method, maxLines: 1),
-          ),
+        toastification.show(
+          title: Text(jsonObject.method, maxLines: 1),
           context: context,
+          autoCloseDuration: Duration(seconds: 2),
+          alignment: Alignment.bottomCenter,
         );
       }
     }
@@ -101,7 +95,25 @@ class AppsPageState extends State<AppsPage> with GetItStateMixin {
     _pairings = _pairings.where((p) => p.active).toList();
     return Stack(
       children: [
-        _pairings.isEmpty ? _buildNoPairingMessage() : _buildPairingList(),
+        Center(
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              Center(
+                child: Image.asset(
+                  'assets/walletkit-logo.png',
+                  width: 200.0,
+                ),
+              ),
+              Container(
+                color: widget.isDarkMode
+                    ? Colors.black.withOpacity(0.8)
+                    : Colors.white.withOpacity(0.8),
+              )
+            ],
+          ),
+        ),
+        if (_pairings.isNotEmpty) _buildPairingList(),
         Positioned(
           bottom: StyleConstants.magic20,
           right: StyleConstants.magic20,
@@ -115,37 +127,7 @@ class AppsPageState extends State<AppsPage> with GetItStateMixin {
             ],
           ),
         ),
-        ValueListenableBuilder(
-          valueListenable: DeepLinkHandler.waiting,
-          builder: (context, value, _) {
-            return Visibility(
-              visible: value,
-              child: Center(
-                child: Container(
-                  decoration: const BoxDecoration(
-                    color: Colors.black38,
-                    borderRadius: BorderRadius.all(Radius.circular(50.0)),
-                  ),
-                  padding: const EdgeInsets.all(12.0),
-                  child: const CircularProgressIndicator(
-                    color: Colors.white,
-                  ),
-                ),
-              ),
-            );
-          },
-        ),
       ],
-    );
-  }
-
-  Widget _buildNoPairingMessage() {
-    return const Center(
-      child: Text(
-        StringConstants.noApps,
-        textAlign: TextAlign.center,
-        style: StyleConstants.bodyText,
-      ),
     );
   }
 
@@ -171,7 +153,7 @@ class AppsPageState extends State<AppsPage> with GetItStateMixin {
   Widget _buildIconButton(IconData icon, void Function()? onPressed) {
     return Container(
       decoration: BoxDecoration(
-        color: StyleConstants.primaryColor,
+        color: Color(0xFF667DFF),
         borderRadius: BorderRadius.circular(
           StyleConstants.linear48,
         ),
@@ -222,9 +204,9 @@ class AppsPageState extends State<AppsPage> with GetItStateMixin {
     }
   }
 
-  void _showErrorDialog(String message) {
+  void _showErrorDialog(String message) async {
     DeepLinkHandler.waiting.value = false;
-    showDialog(
+    await showDialog(
         context: context,
         builder: (BuildContext context) {
           return AlertDialog(

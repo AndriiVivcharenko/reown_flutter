@@ -12,13 +12,13 @@ import '../wc_connection_widget/wc_connection_model.dart';
 
 class WCConnectionRequestWidget extends StatelessWidget {
   const WCConnectionRequestWidget({
-    Key? key,
+    super.key,
     // this.authPayloadParams,
     this.sessionAuthPayload,
     this.proposalData,
     this.requester,
     this.verifyContext,
-  }) : super(key: key);
+  });
 
   // final AuthPayloadParams? authPayloadParams;
   final SessionAuthPayload? sessionAuthPayload;
@@ -34,8 +34,9 @@ class WCConnectionRequestWidget extends StatelessWidget {
 
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(StyleConstants.linear8),
+        borderRadius: BorderRadius.circular(
+          StyleConstants.linear8,
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.center,
@@ -44,9 +45,9 @@ class WCConnectionRequestWidget extends StatelessWidget {
           const SizedBox(height: StyleConstants.linear8),
           Text(
             '${requester!.metadata.name} ${StringConstants.wouldLikeToConnect}',
-            style: StyleConstants.subtitleText.copyWith(
-              fontSize: 18,
-              color: Colors.black,
+            style: TextStyle(
+              fontSize: 18.0,
+              fontWeight: FontWeight.bold,
             ),
             textAlign: TextAlign.center,
           ),
@@ -200,7 +201,6 @@ class VerifyBanner extends StatelessWidget {
         Text(
           origin,
           style: const TextStyle(
-            color: Colors.black54,
             fontWeight: FontWeight.bold,
           ),
         ),

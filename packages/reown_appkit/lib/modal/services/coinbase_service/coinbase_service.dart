@@ -1,12 +1,11 @@
 import 'dart:convert';
 
 import 'package:flutter/services.dart';
-import 'package:reown_appkit/modal/constants/string_constants.dart';
+import 'package:get_it/get_it.dart';
 
 import 'package:reown_appkit/modal/services/coinbase_service/i_coinbase_service.dart';
 import 'package:reown_appkit/modal/services/coinbase_service/models/coinbase_data.dart';
 import 'package:reown_appkit/modal/services/coinbase_service/models/coinbase_events.dart';
-import 'package:reown_appkit/modal/services/explorer_service/explorer_service_singleton.dart';
 
 import 'package:coinbase_wallet_sdk/currency.dart';
 import 'package:coinbase_wallet_sdk/action.dart';
@@ -14,55 +13,47 @@ import 'package:coinbase_wallet_sdk/coinbase_wallet_sdk.dart';
 import 'package:coinbase_wallet_sdk/configuration.dart';
 import 'package:coinbase_wallet_sdk/eth_web3_rpc.dart';
 import 'package:coinbase_wallet_sdk/request.dart';
+import 'package:reown_appkit/modal/services/coinbase_service/utils/coinbase_utils.dart';
+import 'package:reown_appkit/modal/services/explorer_service/i_explorer_service.dart';
 import 'package:reown_appkit/reown_appkit.dart';
 
 class CoinbaseService implements ICoinbaseService {
-  static const coinbasePackageName = 'org.toshi';
-  static const defaultWalletData = ReownAppKitModalWalletInfo(
-    listing: Listing(
-      id: 'fd20dc426fb37566d803205b19bbc1d4096b248ac04548e3cfb6b3a38bd033aa',
-      name: 'Coinbase Wallet',
-      homepage: 'https://www.coinbase.com/wallet/',
-      imageId: 'a5ebc364-8f91-4200-fcc6-be81310a0000',
-      order: 4110,
-      mobileLink: 'cbwallet://wsegue',
-      appStore: 'https://apps.apple.com/app/apple-store/id1278383455',
-      playStore: 'https://play.google.com/store/apps/details?id=org.toshi',
-      // rdns: 'com.coinbase.wallet',
-    ),
-    installed: false,
-    recent: false,
-  );
-
   String _iconImage = '';
+  ReownAppKitModalWalletInfo? _coinbaseWalletData;
+
+  late final PairingMetadata _metadata;
+  late final IReownCore _core;
+  late bool _enabled;
 
   @override
-  ConnectionMetadata get metadata => ConnectionMetadata(
+  ConnectionMetadata get walletMetadata => ConnectionMetadata(
         metadata: PairingMetadata(
-          name: _walletData.listing.name,
-          description: '',
-          url: _walletData.listing.homepage,
-          icons: [
-            _iconImage,
-          ],
+          name: _coinbaseWalletData?.listing.name ?? 'Coinbase Wallet',
+          description: _coinbaseWalletData?.listing.description ?? '',
+          url: _coinbaseWalletData?.listing.homepage ?? '',
+          icons: [_iconImage],
           redirect: Redirect(
-            native: _walletData.listing.mobileLink,
-            universal: _walletData.listing.webappLink,
+            native: _coinbaseWalletData?.listing.mobileLink,
+            universal: _coinbaseWalletData?.listing.linkMode,
+            linkMode: _coinbaseWalletData?.listing.linkMode != null,
           ),
         ),
         publicKey: '',
       );
 
-  static const supportedMethods = [
-    ...MethodsConstants.requiredMethods,
-    'eth_requestAccounts',
-    'eth_signTypedData_v3',
-    'eth_signTypedData_v4',
-    'eth_signTransaction',
-    MethodsConstants.walletSwitchEthChain,
-    MethodsConstants.walletAddEthChain,
-    'wallet_watchAsset',
-  ];
+  IExplorerService get _explorerService => GetIt.I<IExplorerService>();
+
+  @override
+  List<String> get supportedMethods => [
+        ...MethodsConstants.requiredMethods,
+        'eth_requestAccounts',
+        'eth_signTypedData_v3',
+        'eth_signTypedData_v4',
+        'eth_signTransaction',
+        MethodsConstants.walletSwitchEthChain,
+        MethodsConstants.walletAddEthChain,
+        'wallet_watchAsset',
+      ];
 
   @override
   Event<CoinbaseConnectEvent> onCoinbaseConnect = Event<CoinbaseConnectEvent>();
@@ -78,11 +69,6 @@ class CoinbaseService implements ICoinbaseService {
   Event<CoinbaseResponseEvent> get onCoinbaseResponse =>
       Event<CoinbaseResponseEvent>();
 
-  late final PairingMetadata _metadata;
-  late bool _enabled;
-  late ReownAppKitModalWalletInfo _walletData;
-  late final IReownCore _core;
-
   CoinbaseService({
     required PairingMetadata metadata,
     required IReownCore core,
@@ -95,20 +81,35 @@ class CoinbaseService implements ICoinbaseService {
   Future<void> init() async {
     if (!_enabled) return;
     // Configure SDK for each platform
+    _coinbaseWalletData = (await _explorerService.getCoinbaseWalletObject()) ??
+        ReownAppKitModalWalletInfo(
+          listing: CoinbaseUtils.defaultListingData,
+          installed: false,
+          recent: false,
+        );
 
-    _walletData = (await explorerService.instance.getCoinbaseWalletObject()) ??
-        defaultWalletData;
-    final imageId = defaultWalletData.listing.imageId;
-    _iconImage = explorerService.instance.getWalletImageUrl(imageId);
+    final imageId = _coinbaseWalletData?.listing.imageId ?? '';
+    _iconImage = _explorerService.getWalletImageUrl(imageId);
 
-    final walletLink = _walletData.listing.mobileLink ?? '';
-    final redirect = _metadata.redirect;
-    final callback = redirect?.universal ?? redirect?.native ?? '';
+    final walletLink = (walletMetadata.metadata.redirect?.linkMode == true
+            ? _coinbaseWalletData?.listing.linkMode
+            : _coinbaseWalletData?.listing.mobileLink) ??
+        '';
+
+    final dappRedirect = _metadata.redirect;
+    final callback = dappRedirect?.linkMode == true
+        ? (dappRedirect?.universal ?? dappRedirect?.native ?? '')
+        : (dappRedirect?.native ?? '');
+
+    _core.logger.i(
+      '[$runtimeType] init with host: $walletLink, callback: $callback',
+    );
+
     if (callback.isNotEmpty || walletLink.isNotEmpty) {
       try {
         final config = Configuration(
           ios: IOSConfiguration(
-            host: Uri.parse(walletLink),
+            host: Uri.parse('${walletLink}wsegue'),
             callback: Uri.parse(callback),
           ),
           android: AndroidConfiguration(
@@ -121,6 +122,7 @@ class CoinbaseService implements ICoinbaseService {
       }
     } else {
       _enabled = false;
+      _core.logger.e('[$runtimeType] Initialization error');
       throw CoinbaseServiceException('Initialization error');
     }
   }
@@ -161,7 +163,7 @@ class CoinbaseService implements ICoinbaseService {
       }
 
       final data = CoinbaseData.fromJson(result.account!.toJson()).copytWith(
-        peer: metadata.copyWith(
+        peer: walletMetadata.copyWith(
           publicKey: await peerPublicKey,
         ),
         self: ConnectionMetadata(
@@ -170,13 +172,16 @@ class CoinbaseService implements ICoinbaseService {
         ),
       );
       onCoinbaseConnect.broadcast(CoinbaseConnectEvent(data));
+      _core.logger.i('[$runtimeType] getAccount ${data.toJson()}');
       return;
     } on PlatformException catch (e, s) {
+      _core.logger.e('[$runtimeType] getAccount PlatformException $e');
       // Currently Coinbase SDK is not differentiate between User rejection or any other kind of error in iOS
       final errorMessage = (e.message ?? '').toLowerCase();
       onCoinbaseError.broadcast(CoinbaseErrorEvent(errorMessage));
       throw CoinbaseServiceException(errorMessage, e, s);
     } catch (e, s) {
+      _core.logger.e('[$runtimeType] getAccount $e');
       onCoinbaseError.broadcast(CoinbaseErrorEvent('Initial handshake error'));
       throw CoinbaseServiceException('Initial handshake error', e, s);
     }
@@ -191,6 +196,7 @@ class CoinbaseService implements ICoinbaseService {
     final cid = chainId.contains(':') ? chainId.split(':').last : chainId;
     try {
       final req = Request(actions: [request.toCoinbaseRequest(cid)]);
+      _core.logger.i('[$runtimeType] request ${jsonEncode(req.toJson())}');
       final result = (await CoinbaseWalletSDK.shared.makeRequest(req)).first;
       if (result.error != null) {
         final errorCode = result.error?.code;
@@ -208,7 +214,7 @@ class CoinbaseService implements ICoinbaseService {
         case 'eth_requestAccounts':
           final json = jsonDecode(value!);
           final data = CoinbaseData.fromJson(json).copytWith(
-            peer: metadata.copyWith(
+            peer: walletMetadata.copyWith(
               publicKey: await peerPublicKey,
             ),
             self: ConnectionMetadata(
@@ -222,14 +228,21 @@ class CoinbaseService implements ICoinbaseService {
           onCoinbaseResponse.broadcast(CoinbaseResponseEvent(data: value));
           break;
       }
+      _core.logger.i('[$runtimeType] request result $value');
       return value;
     } on CoinbaseServiceException catch (e) {
+      _core.logger.e(
+        '[$runtimeType] request CoinbaseServiceException ${e.error}, ${e.message}',
+      );
       onCoinbaseError.broadcast(CoinbaseErrorEvent(e.message));
       rethrow;
     } on PlatformException catch (e, s) {
       final message = 'Coinbase Wallet Error: (${e.code}) ${e.message}';
+      _core.logger.e('[$runtimeType] request PlatformException $message');
       onCoinbaseError.broadcast(CoinbaseErrorEvent(message));
       throw CoinbaseServiceException(message, e, s);
+    } catch (e) {
+      _core.logger.e('[$runtimeType] request $e');
     }
   }
 
@@ -238,6 +251,7 @@ class CoinbaseService implements ICoinbaseService {
     try {
       return await CoinbaseWalletSDK.shared.isAppInstalled();
     } catch (e, s) {
+      _core.logger.e('[$runtimeType] isInstalled $e');
       throw CoinbaseServiceException('Check is installed error', e, s);
     }
   }
@@ -247,6 +261,7 @@ class CoinbaseService implements ICoinbaseService {
     try {
       return await CoinbaseWalletSDK.shared.isConnected();
     } catch (e, s) {
+      _core.logger.e('[$runtimeType] isConnected $e');
       throw CoinbaseServiceException('Check is connected error', e, s);
     }
   }
@@ -256,6 +271,7 @@ class CoinbaseService implements ICoinbaseService {
     try {
       return CoinbaseWalletSDK.shared.resetSession();
     } catch (e, s) {
+      _core.logger.e('[$runtimeType] resetSession $e');
       throw CoinbaseServiceException('Reset session error', e, s);
     }
   }
@@ -315,9 +331,10 @@ extension on SessionRequestParams {
       case MethodsConstants.walletSwitchEthChain:
       case MethodsConstants.walletAddEthChain:
         try {
-          final chainInfo = ReownAppKitModalNetworks.getNetworkById(
-            CoreConstants.namespace,
-            chainId!,
+          final namespace = NamespaceUtils.getNamespaceFromChain(chainId!);
+          final chainInfo = ReownAppKitModalNetworks.getNetworkInfo(
+            namespace,
+            chainId,
           )!;
           return AddEthereumChain(
             chainId: chainInfo.chainId,

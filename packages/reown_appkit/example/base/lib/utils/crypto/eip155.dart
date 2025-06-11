@@ -1,287 +1,281 @@
 import 'dart:convert';
 
 import 'package:eth_sig_util/util/utils.dart';
-import 'package:intl/intl.dart';
-import 'package:reown_appkit/reown_appkit.dart';
-import 'package:reown_appkit_dapp/models/chain_metadata.dart';
-import 'package:reown_appkit_dapp/utils/crypto/chain_data.dart';
-import 'package:reown_appkit_dapp/utils/smart_contracts.dart';
-import 'package:reown_appkit_dapp/utils/test_data.dart';
+import 'package:reown_appkit/modal/utils/public/appkit_modal_networks_utils.dart';
 
 enum EIP155Methods {
   personalSign,
   ethSign,
-  ethSignTransaction,
   ethSignTypedData,
+  ethSignTypedDataV4,
+  ethSignTransaction,
   ethSendTransaction,
 }
 
-enum EIP155Events {
-  chainChanged,
-  accountsChanged,
-}
+// enum EIP155Events {
+//   none,
+// }
 
 class EIP155 {
   static final Map<EIP155Methods, String> methods = {
     EIP155Methods.personalSign: 'personal_sign',
     EIP155Methods.ethSign: 'eth_sign',
-    EIP155Methods.ethSignTransaction: 'eth_signTransaction',
     EIP155Methods.ethSignTypedData: 'eth_signTypedData',
+    EIP155Methods.ethSignTypedDataV4: 'eth_signTypedData_v4',
+    EIP155Methods.ethSignTransaction: 'eth_signTransaction',
     EIP155Methods.ethSendTransaction: 'eth_sendTransaction',
   };
 
-  static final Map<EIP155Events, String> events = {
-    EIP155Events.chainChanged: 'chainChanged',
-    EIP155Events.accountsChanged: 'accountsChanged',
-  };
+  static final List<String> events =
+      NetworkUtils.defaultNetworkEvents['eip155']!.toList();
 
-  static Future<dynamic> callMethod({
-    required IReownAppKit appKit,
-    required String topic,
-    required String method,
-    required ChainMetadata chainData,
-    required String address,
-  }) {
-    switch (method) {
-      case 'personal_sign':
-        return personalSign(
-          appKit: appKit,
-          topic: topic,
-          chainId: chainData.chainId,
-          address: address,
-        );
-      case 'eth_sign':
-        return ethSign(
-          appKit: appKit,
-          topic: topic,
-          chainId: chainData.chainId,
-          address: address,
-        );
-      case 'eth_signTypedData':
-        return ethSignTypedData(
-          appKit: appKit,
-          topic: topic,
-          chainId: chainData.chainId,
-          address: address,
-        );
-      case 'eth_signTransaction':
-        return ethSignTransaction(
-          appKit: appKit,
-          topic: topic,
-          chainId: chainData.chainId,
-        );
-      case 'eth_sendTransaction':
-        return ethSendTransaction(
-          appKit: appKit,
-          topic: topic,
-          chainId: chainData.chainId,
-        );
-      default:
-        throw 'Method unimplemented';
-    }
+  static String personalSignMessage(String chain) {
+    final bytes = utf8.encode(
+      'Welcome to Flutter AppKit on $chain',
+    );
+    return bytesToHex(bytes, include0x: true);
   }
 
-  static Future<dynamic> callSmartContract({
-    required IReownAppKit appKit,
-    required String topic,
-    required String address,
-    required String action,
-  }) {
-    // Create DeployedContract object using contract's ABI and address
-    final deployedContract = DeployedContract(
-      ContractAbi.fromJson(
-        jsonEncode(SepoliaTestContract.readContractAbi),
-        'Alfreedoms',
-      ),
-      EthereumAddress.fromHex(SepoliaTestContract.contractAddress),
-    );
+  static String typedData =
+      r'''{"types":{"EIP712Domain":[{"type":"string","name":"name"},{"type":"string","name":"version"},{"type":"uint256","name":"chainId"},{"type":"address","name":"verifyingContract"}],"Part":[{"name":"account","type":"address"},{"name":"value","type":"uint96"}],"Mint721":[{"name":"tokenId","type":"uint256"},{"name":"tokenURI","type":"string"},{"name":"creators","type":"Part[]"},{"name":"royalties","type":"Part[]"}]},"domain":{"name":"Mint721","version":"1","chainId":4,"verifyingContract":"0x2547760120aed692eb19d22a5d9ccfe0f7872fce"},"primaryType":"Mint721","message":{"@type":"ERC721","contract":"0x2547760120aed692eb19d22a5d9ccfe0f7872fce","tokenId":"1","uri":"ipfs://ipfs/hash","creators":[{"account":"0xc5eac3488524d577a1495492599e8013b1f91efa","value":10000}],"royalties":[],"tokenURI":"ipfs://ipfs/hash"}}''';
 
-    final sepolia =
-        ChainData.allChains.firstWhere((e) => e.chainId == 'eip155:11155111');
-
-    switch (action) {
-      case 'read':
-        return readSmartContract(
-          appKit: appKit,
-          rpcUrl: sepolia.rpc.first,
-          contract: deployedContract,
-          address: address,
-        );
-      case 'write':
-        return appKit.requestWriteContract(
-          topic: topic,
-          chainId: sepolia.chainId,
-          deployedContract: deployedContract,
-          functionName: 'transfer',
-          transaction: Transaction(
-            from: EthereumAddress.fromHex(address),
-          ),
-          parameters: [
-            // Recipient
-            EthereumAddress.fromHex(
-              '0x59e2f66C0E96803206B6486cDb39029abAE834c0',
-            ),
-            // Amount to Transfer
-            EtherAmount.fromInt(EtherUnit.finney, 10).getInWei, // == 0.010
+  static Map<String, dynamic> typeDataV3(int chainId) => {
+        'types': {
+          'EIP712Domain': [
+            {'name': 'name', 'type': 'string'},
+            {'name': 'version', 'type': 'string'},
+            {'name': 'chainId', 'type': 'uint256'},
+            {'name': 'verifyingContract', 'type': 'address'}
           ],
-        );
-      default:
-        return Future.value();
-    }
-  }
-
-  static Future<dynamic> personalSign({
-    required IReownAppKit appKit,
-    required String topic,
-    required String chainId,
-    required String address,
-  }) async {
-    return await appKit.request(
-      topic: topic,
-      chainId: chainId,
-      request: getParams('personal_sign', address)!,
-    );
-  }
-
-  static Future<dynamic> ethSign({
-    required IReownAppKit appKit,
-    required String topic,
-    required String chainId,
-    required String address,
-  }) async {
-    return await appKit.request(
-      topic: topic,
-      chainId: chainId,
-      request: getParams('eth_sign', address)!,
-    );
-  }
-
-  static Future<dynamic> ethSignTypedData({
-    required IReownAppKit appKit,
-    required String topic,
-    required String chainId,
-    required String address,
-  }) async {
-    return await appKit.request(
-      topic: topic,
-      chainId: chainId,
-      request: getParams('eth_signTypedData', address)!,
-    );
-  }
-
-  static Future<dynamic> ethSignTransaction({
-    required IReownAppKit appKit,
-    required String topic,
-    required String chainId,
-  }) async {
-    return await appKit.request(
-      topic: topic,
-      chainId: chainId,
-      request: getParams('eth_signTransaction', '')!,
-    );
-  }
-
-  static Future<dynamic> ethSendTransaction({
-    required IReownAppKit appKit,
-    required String topic,
-    required String chainId,
-  }) async {
-    return await appKit.request(
-      topic: topic,
-      chainId: chainId,
-      request: getParams('eth_sendTransaction', '')!,
-    );
-  }
-
-  static Future<dynamic> readSmartContract({
-    required IReownAppKit appKit,
-    required String rpcUrl,
-    required String address,
-    required DeployedContract contract,
-  }) async {
-    final results = await Future.wait([
-      // results[0]
-      appKit.requestReadContract(
-        deployedContract: contract,
-        functionName: 'name',
-        rpcUrl: rpcUrl,
-      ),
-      // results[1]
-      appKit.requestReadContract(
-        deployedContract: contract,
-        functionName: 'totalSupply',
-        rpcUrl: rpcUrl,
-      ),
-      // results[2]
-      appKit.requestReadContract(
-        deployedContract: contract,
-        functionName: 'balanceOf',
-        rpcUrl: rpcUrl,
-        parameters: [
-          EthereumAddress.fromHex(address),
-        ],
-      ),
-    ]);
-
-    final oCcy = NumberFormat('#,##0.00', 'en_US');
-    final name = results[0].first.toString();
-    final total = results[1].first / BigInt.from(1000000000000000000);
-    final balance = results[2].first / BigInt.from(1000000000000000000);
-
-    return {
-      'name': name,
-      'totalSupply': oCcy.format(total),
-      'balance': oCcy.format(balance),
-    };
-  }
-
-  static SessionRequestParams? getParams(String method, String address) {
-    switch (method) {
-      case 'personal_sign':
-        final bytes = utf8.encode(testSignData);
-        final encoded = bytesToHex(bytes, include0x: true);
-        return SessionRequestParams(
-          method: methods[EIP155Methods.personalSign]!,
-          params: [encoded, address],
-        );
-      case 'eth_sign':
-        return SessionRequestParams(
-          method: methods[EIP155Methods.ethSign]!,
-          params: [address, testSignData],
-        );
-      case 'eth_signTypedData':
-        return SessionRequestParams(
-          method: methods[EIP155Methods.ethSignTypedData]!,
-          params: [address, typedData],
-        );
-      case 'eth_signTransaction':
-        return SessionRequestParams(
-          method: methods[EIP155Methods.ethSignTransaction]!,
-          params: [
-            Transaction(
-              from: EthereumAddress.fromHex(address),
-              to: EthereumAddress.fromHex(
-                '0x59e2f66C0E96803206B6486cDb39029abAE834c0',
-              ),
-              value: EtherAmount.fromInt(EtherUnit.finney, 12), // == 0.012
-            ).toJson(),
+          'Person': [
+            {'name': 'name', 'type': 'string'},
+            {'name': 'wallet', 'type': 'address'}
           ],
-        );
-      case 'eth_sendTransaction':
-        return SessionRequestParams(
-          method: methods[EIP155Methods.ethSendTransaction]!,
-          params: [
-            Transaction(
-              from: EthereumAddress.fromHex(address),
-              to: EthereumAddress.fromHex(
-                '0x59e2f66C0E96803206B6486cDb39029abAE834c0',
-              ),
-              value: EtherAmount.fromInt(EtherUnit.finney, 12), // == 0.012
-            ).toJson(),
+          'Mail': [
+            {'name': 'from', 'type': 'Person'},
+            {'name': 'to', 'type': 'Person'},
+            {'name': 'contents', 'type': 'string'}
+          ]
+        },
+        'primaryType': 'Mail',
+        'domain': {
+          'name': 'Ether Mail',
+          'version': '1',
+          'chainId': chainId,
+          'verifyingContract': '0xCcCCccccCCCCcCCCCCCcCcCccCcCCCcCcccccccC'
+        },
+        'message': {
+          'from': {
+            'name': 'Cow',
+            'wallet': '0xCD2a3d9F938E13CD947Ec05AbC7FE734Df8DD826'
+          },
+          'to': {
+            'name': 'Bob',
+            'wallet': '0xbBbBBBBbbBBBbbbBbbBbbbbBBbBbbbbBbBbbBBbB'
+          },
+          'contents': 'Hello, Bob!'
+        }
+      };
+
+  static Map<String, dynamic> typeDataV4(int chainId) => {
+        'types': {
+          'EIP712Domain': [
+            {'type': 'string', 'name': 'name'},
+            {'type': 'string', 'name': 'version'},
+            {'type': 'uint256', 'name': 'chainId'},
+            {'type': 'address', 'name': 'verifyingContract'}
           ],
-        );
-      default:
-        return null;
-    }
-  }
+          'Part': [
+            {'name': 'account', 'type': 'address'},
+            {'name': 'value', 'type': 'uint96'}
+          ],
+          'Mint721': [
+            {'name': 'tokenId', 'type': 'uint256'},
+            {'name': 'tokenURI', 'type': 'string'},
+            {'name': 'creators', 'type': 'Part[]'},
+            {'name': 'royalties', 'type': 'Part[]'}
+          ]
+        },
+        'domain': {
+          'name': 'Mint721',
+          'version': '1',
+          'chainId': chainId,
+          'verifyingContract': '0x2547760120aed692eb19d22a5d9ccfe0f7872fce'
+        },
+        'primaryType': 'Mint721',
+        'message': {
+          '@type': 'ERC721',
+          'contract': '0x2547760120aed692eb19d22a5d9ccfe0f7872fce',
+          'tokenId': '1',
+          'uri': 'ipfs://ipfs/hash',
+          'creators': [
+            {
+              'account': '0xc5eac3488524d577a1495492599e8013b1f91efa',
+              'value': 10000
+            }
+          ],
+          'royalties': [],
+          'tokenURI': 'ipfs://ipfs/hash'
+        }
+      };
+
+  /// KADENA ///
+
+// SignRequest createSignRequest({
+//   required String networkId,
+//   required String signingPubKey,
+//   required String sender,
+//   String code = '"hello"',
+//   Map<String, dynamic>? data,
+//   List<DappCapp> caps = const [],
+//   String chainId = '1',
+//   int gasLimit = 2000,
+//   double gasPrice = 1e-8,
+//   int ttl = 600,
+// }) =>
+//     SignRequest(
+//       code: code,
+//       data: data ?? {},
+//       sender: sender,
+//       networkId: networkId,
+//       chainId: chainId,
+//       gasLimit: gasLimit,
+//       gasPrice: gasPrice,
+//       signingPubKey: signingPubKey,
+//       ttl: ttl,
+//       caps: caps,
+//     );
+
+// PactCommandPayload createPactCommandPayload({
+//   required String networkId,
+//   required String sender,
+//   String code = '"hello"',
+//   Map<String, dynamic>? data,
+//   List<SignerCapabilities> signerCaps = const [],
+//   String chainId = '1',
+//   int gasLimit = 2000,
+//   double gasPrice = 1e-8,
+//   int ttl = 600,
+// }) =>
+//     PactCommandPayload(
+//       networkId: networkId,
+//       payload: CommandPayload(
+//         exec: ExecMessage(
+//           code: code,
+//           data: data ?? {},
+//         ),
+//       ),
+//       signers: signerCaps,
+//       meta: CommandMetadata(
+//         chainId: chainId,
+//         gasLimit: gasLimit,
+//         gasPrice: gasPrice,
+//         ttl: ttl,
+//         sender: sender,
+//       ),
+//     );
+
+// QuicksignRequest createQuicksignRequest({
+//   required String cmd,
+//   List<QuicksignSigner> sigs = const [],
+// }) =>
+//     QuicksignRequest(
+//       commandSigDatas: [
+//         CommandSigData(
+//           cmd: cmd,
+//           sigs: sigs,
+//         ),
+//       ],
+//     );
+
+// GetAccountsRequest createGetAccountsRequest({
+//   required String account,
+// }) =>
+//     GetAccountsRequest(
+//       accounts: [
+//         AccountRequest(
+//           account: account,
+//         ),
+//       ],
+//     );
+
+  /// KADENA ///
+
+// SignRequest createSignRequest({
+//   required String networkId,
+//   required String signingPubKey,
+//   required String sender,
+//   String code = '"hello"',
+//   Map<String, dynamic>? data,
+//   List<DappCapp> caps = const [],
+//   String chainId = '1',
+//   int gasLimit = 2000,
+//   double gasPrice = 1e-8,
+//   int ttl = 600,
+// }) =>
+//     SignRequest(
+//       code: code,
+//       data: data ?? {},
+//       sender: sender,
+//       networkId: networkId,
+//       chainId: chainId,
+//       gasLimit: gasLimit,
+//       gasPrice: gasPrice,
+//       signingPubKey: signingPubKey,
+//       ttl: ttl,
+//       caps: caps,
+//     );
+
+// PactCommandPayload createPactCommandPayload({
+//   required String networkId,
+//   required String sender,
+//   String code = '"hello"',
+//   Map<String, dynamic>? data,
+//   List<SignerCapabilities> signerCaps = const [],
+//   String chainId = '1',
+//   int gasLimit = 2000,
+//   double gasPrice = 1e-8,
+//   int ttl = 600,
+// }) =>
+//     PactCommandPayload(
+//       networkId: networkId,
+//       payload: CommandPayload(
+//         exec: ExecMessage(
+//           code: code,
+//           data: data ?? {},
+//         ),
+//       ),
+//       signers: signerCaps,
+//       meta: CommandMetadata(
+//         chainId: chainId,
+//         gasLimit: gasLimit,
+//         gasPrice: gasPrice,
+//         ttl: ttl,
+//         sender: sender,
+//       ),
+//     );
+
+// QuicksignRequest createQuicksignRequest({
+//   required String cmd,
+//   List<QuicksignSigner> sigs = const [],
+// }) =>
+//     QuicksignRequest(
+//       commandSigDatas: [
+//         CommandSigData(
+//           cmd: cmd,
+//           sigs: sigs,
+//         ),
+//       ],
+//     );
+
+// GetAccountsRequest createGetAccountsRequest({
+//   required String account,
+// }) =>
+//     GetAccountsRequest(
+//       accounts: [
+//         AccountRequest(
+//           account: account,
+//         ),
+//       ],
+//     );
 }

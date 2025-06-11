@@ -1,7 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart' show kIsWeb;
-
+import 'dart:typed_data';
+import 'package:ed25519_edwards/ed25519_edwards.dart' as ed;
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 
@@ -76,10 +77,14 @@ class ReownCoreUtils {
     String id = getId();
     return <String>[
       [protocol, version].join('-'),
-      <String>['Reown-Flutter', sdkVersion].join('-'),
+      coreSdkVersion(sdkVersion),
       os,
       id,
-    ].join('/');
+    ].join('/').toLowerCase();
+  }
+
+  static String coreSdkVersion(String sdkVersion) {
+    return <String>['reown-flutter', sdkVersion].join('-');
   }
 
   static String formatRelayRpcUrl({
@@ -265,5 +270,39 @@ class ReownCoreUtils {
     } catch (_) {
       throw ReownCoreError(code: 3001, message: 'Can not open $url');
     }
+  }
+
+  static bool ed25519Verify(
+    ed.PublicKey publicKey,
+    Uint8List message,
+    Uint8List sig,
+  ) {
+    return ed.verify(publicKey, message, sig);
+  }
+
+  static dynamic recursiveSearchForMapKey(
+    Map<String, dynamic> map,
+    String targetKey,
+  ) {
+    try {
+      for (final entry in map.entries) {
+        if (entry.key.toString() == targetKey) {
+          return entry.value;
+        } else if (entry.value is Map<String, dynamic>) {
+          final result = recursiveSearchForMapKey(entry.value, targetKey);
+          if (result != null) return result;
+        } else if (entry.value is List) {
+          for (final element in entry.value) {
+            if (element is Map<String, dynamic>) {
+              final result = recursiveSearchForMapKey(element, targetKey);
+              if (result != null) return result;
+            }
+          }
+        }
+      }
+    } catch (e) {
+      throw ArgumentError('recursiveSearchForMapKey error $e');
+    }
+    return null;
   }
 }

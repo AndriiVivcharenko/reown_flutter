@@ -1,3 +1,4 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:get_it/get_it.dart';
@@ -75,6 +76,65 @@ class AppDetailPageState extends State<AppDetailPage> {
           sessionWidgets.add(const SizedBox(height: 20.0));
         }
       }
+      sessionWidgets.add(const SizedBox.square(dimension: 10.0));
+      sessionWidgets.add(
+        Row(
+          children: [
+            CustomButton(
+              type: CustomButtonType.normal,
+              onTap: () async {
+                try {
+                  await _walletKit.extendSession(
+                    topic: session.topic,
+                  );
+                  setState(() {});
+                } catch (e) {
+                  debugPrint('[SampleWallet] ${e.toString()}');
+                }
+              },
+              child: const Center(
+                child: Text(
+                  'Extend Session',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+      sessionWidgets.add(const SizedBox.square(dimension: 10.0));
+      sessionWidgets.add(
+        Row(
+          children: [
+            CustomButton(
+              type: CustomButtonType.normal,
+              onTap: () async {
+                try {
+                  await _walletKit.updateSession(
+                    topic: session.topic,
+                    namespaces: session.namespaces,
+                  );
+                  setState(() {});
+                } catch (e) {
+                  debugPrint('[SampleWallet] ${e.toString()}');
+                }
+              },
+              child: const Center(
+                child: Text(
+                  'Update Session',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
       sessionWidgets.add(const SizedBox.square(dimension: 10.0));
       sessionWidgets.add(
         Row(
@@ -163,14 +223,15 @@ class AppDetailPageState extends State<AppDetailPage> {
                           );
                         }
                         return CircleAvatar(
-                          backgroundImage: NetworkImage(imageUrl),
+                          backgroundImage: CachedNetworkImageProvider(
+                            imageUrl,
+                          ),
                           radius: 40.0,
                         );
                       }
                       return CircleAvatar(
-                        backgroundImage:
-                            const AssetImage('assets/images/default_icon.png'),
                         radius: 40.0,
+                        backgroundColor: Colors.black12,
                       );
                     },
                   ),
